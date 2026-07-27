@@ -5,6 +5,9 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+[dependencies]
+oafmt-core = { path = "../oafmt-core" }
+
 [[bin]]
 name = "oafmt"
 path = "src/main.rs"

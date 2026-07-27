@@ -1,0 +1,12 @@
+openapi: 3.1.0
+info: {}
+paths:
+  /x:
+    get:
+      # summary: repeated entry-like text is not a range
+      # summary owns this comment
+      summary: hello
+      responses: {}
+
+      # unknown owns this comment
+      x-note: keep

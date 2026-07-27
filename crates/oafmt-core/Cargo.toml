@@ -5,5 +5,9 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+[dependencies]
+oafmt-oas = { path = "../oafmt-oas" }
+oafmt-syntax = { path = "../oafmt-syntax" }
+
 [lints]
 workspace = true

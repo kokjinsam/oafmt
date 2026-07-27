@@ -1,0 +1,13 @@
+openapi: 3.0.3
+info:
+  title: "Café ☕"
+  version: '00000000000000000001'
+paths:
+  /x:
+    patch:
+      summary: >
+        folded
+        text
+      description: |2-
+          literal
+      responses: {}
