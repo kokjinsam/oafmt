@@ -1,0 +1,11 @@
+collections:
+  flow_sequence: [one, {two: 2}]
+  flow_mapping: {one: 1, two: []}
+  block_sequence:
+    - one
+    - two
+  block_mapping:
+    one: 1
+  empty_sequence: []
+  empty_mapping: {}
+tail: done

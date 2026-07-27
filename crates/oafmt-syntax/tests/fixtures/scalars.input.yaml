@@ -1,0 +1,12 @@
+tail: done
+scalars:
+  plain: 00123456789012345678901234567890
+  single: 'kept ''quoted'''
+  double: "kept\nquoted"
+  literal: |2-
+      literal
+      text
+  folded: >+2
+      folded
+      text
+
