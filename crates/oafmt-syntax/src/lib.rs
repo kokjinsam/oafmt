@@ -1,0 +1,1 @@
+//! Syntax representation for `oafmt`.

@@ -1,0 +1,13 @@
+[package]
+name = "oafmt-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "oafmt"
+path = "src/main.rs"
+
+[lints]
+workspace = true

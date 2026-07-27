@@ -1,0 +1,1 @@
+//! Formatting orchestration for `oafmt`.
