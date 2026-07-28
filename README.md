@@ -13,14 +13,30 @@ slices. The Phase 1 experiment remains historical evidence in
 
 ```sh
 oafmt FILE
-oafmt --write FILE
-oafmt --check FILE
-oafmt --diff FILE
+oafmt --write FILE...
+oafmt --check FILE...
+oafmt --diff FILE...
 oafmt --stdin-filepath virtual.yaml < input.yaml
 ```
 
-The formatter has no configuration, file discovery, reference resolution, or
-multi-input mode.
+Plain stdout mode and `--stdin-filepath` accept one document. Stdin cannot be
+combined with file arguments, and `--write` does not accept stdin. Write,
+check, and diff modes accept one or more explicitly supplied files. A shell may
+expand a pattern before invoking `oafmt`, but the formatter does not implement
+native glob syntax.
+
+Explicit files are normalized lexically, deduplicated without resolving
+symlinks, sorted by path, and processed serially. Read-only modes follow an
+explicitly named file symlink. Write mode rejects explicitly named symlinks,
+preflights every input before making any change, and performs
+permission-preserving atomic replacement per changed file. A failure during
+preflight prevents every replacement. A later replacement failure does not
+roll back earlier successful replacements, so a multi-file write is not
+transactional across the set.
+
+The formatter has no configuration, file discovery, recursive directory
+processing, native globs, reference resolution, or parallel execution.
+Directories remain errors.
 
 ## Development
 
