@@ -2,10 +2,10 @@
 
 use std::fmt;
 
-use oafmt_oas::{Location, Version};
+use oafmt_oas::{Edge, ObjectKind, SemanticKind, Version};
 use oafmt_syntax::{
-    ByteRange, DocumentInfo, MappingInfo, SyntaxError, inspect_document, reorder_mappings,
-    validate_semantic_preservation,
+    ByteRange, DocumentInfo, MappingInfo, SequenceInfo, SyntaxError, inspect_document,
+    reorder_mappings, validate_semantic_preservation,
 };
 
 /// Explicit input syntax. No filename or content sniffing occurs in the core.
@@ -20,6 +20,29 @@ pub enum InputFormat {
 pub struct FormatResult {
     pub output: String,
     pub changed: bool,
+}
+
+/// One provenance step from the entry-document root.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RouteEdge {
+    FixedField(String),
+    DynamicMapValue(String),
+    SequenceItem(usize),
+}
+
+/// A syntax range with its OpenAPI semantic expectation and complete route.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClassifiedRange {
+    pub range: ByteRange,
+    pub kind: SemanticKind,
+    pub route: Vec<RouteEdge>,
+}
+
+/// The semantic inventory for one supported OpenAPI entry document.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClassificationResult {
+    pub version: Version,
+    pub ranges: Vec<ClassifiedRange>,
 }
 
 /// Caller/input failures and formatter invariant failures.
@@ -48,7 +71,8 @@ pub fn format(source: &str, format: InputFormat) -> Result<FormatResult, FormatE
     let original = inspect_document(source, syntax_format).map_err(map_syntax_error)?;
     let root = mapping_by_range(&original, original.root)?;
     let version = detect_version(root)?;
-    let operation_ranges = operation_ranges(&original, root, version);
+    let inventory = semantic_inventory(&original, version)?;
+    let operation_ranges = eligible_operation_ranges(&inventory);
     let operation_mappings: Vec<_> = operation_ranges
         .iter()
         .map(|range| mapping_by_range(&original, *range))
@@ -88,6 +112,18 @@ pub fn format(source: &str, format: InputFormat) -> Result<FormatResult, FormatE
     })
 }
 
+/// Classify reachable mappings and sequences without formatting them.
+pub fn classify(source: &str, format: InputFormat) -> Result<ClassificationResult, FormatError> {
+    let syntax_format = match format {
+        InputFormat::Yaml => oafmt_syntax::InputFormat::Yaml,
+        InputFormat::Json => oafmt_syntax::InputFormat::Json,
+    };
+    let document = inspect_document(source, syntax_format).map_err(map_syntax_error)?;
+    let root = mapping_by_range(&document, document.root)?;
+    let version = detect_version(root)?;
+    semantic_inventory(&document, version)
+}
+
 fn detect_version(root: &MappingInfo) -> Result<Version, FormatError> {
     let entries: Vec<_> = root
         .entries
@@ -110,53 +146,162 @@ fn detect_version(root: &MappingInfo) -> Result<Version, FormatError> {
     })
 }
 
-fn operation_ranges(
+fn semantic_inventory(
     document: &DocumentInfo,
-    root: &MappingInfo,
     version: Version,
-) -> Vec<ByteRange> {
-    let Some(paths_range) = child_mapping_range(root, "paths") else {
-        return Vec::new();
-    };
-    let Some(paths) = find_mapping(document, paths_range) else {
-        return Vec::new();
-    };
-    let mut operations = Vec::new();
-    for path_entry in &paths.entries {
-        let Some(path_key) = path_entry.key.as_deref() else {
-            continue;
-        };
-        if version.classify_child(Location::Paths, path_key) != Some(Location::PathItem) {
-            continue;
-        }
-        let Some(path_item_range) = path_entry.value_mapping else {
-            continue;
-        };
-        let Some(path_item) = find_mapping(document, path_item_range) else {
-            continue;
-        };
-        for method_entry in &path_item.entries {
-            let Some(method_key) = method_entry.key.as_deref() else {
-                continue;
-            };
-            if version.classify_child(Location::PathItem, method_key) == Some(Location::Operation)
-                && let Some(operation) = method_entry.value_mapping
-            {
-                operations.push(operation);
-            }
-        }
+) -> Result<ClassificationResult, FormatError> {
+    let root = mapping_by_range(document, document.root)?;
+    let mut ranges = Vec::new();
+    walk_mapping(
+        document,
+        version,
+        root,
+        SemanticKind::Object(ObjectKind::OpenApi),
+        &[],
+        &mut ranges,
+    );
+    ranges.sort_by_key(|classified| classified.range);
+    Ok(ClassificationResult { version, ranges })
+}
+
+fn walk_mapping(
+    document: &DocumentInfo,
+    version: Version,
+    mapping: &MappingInfo,
+    kind: SemanticKind,
+    route: &[RouteEdge],
+    ranges: &mut Vec<ClassifiedRange>,
+) {
+    ranges.push(ClassifiedRange {
+        range: mapping.range,
+        kind,
+        route: route.to_vec(),
+    });
+    if kind == SemanticKind::Opaque {
+        return;
     }
+
+    for entry in &mapping.entries {
+        let Some(key) = entry.key.as_deref() else {
+            continue;
+        };
+        let Some((child, route_edge)) = version
+            .transition(kind, Edge::FixedField(key))
+            .map(|child| (child, RouteEdge::FixedField(key.to_owned())))
+            .or_else(|| {
+                version
+                    .transition(kind, Edge::DynamicMapValue(key))
+                    .map(|child| (child, RouteEdge::DynamicMapValue(key.to_owned())))
+            })
+        else {
+            continue;
+        };
+        let mut child_route = route.to_vec();
+        child_route.push(route_edge);
+        walk_value(
+            document,
+            version,
+            entry.value_mapping,
+            entry.value_sequence,
+            child,
+            &child_route,
+            ranges,
+        );
+    }
+}
+
+fn walk_sequence(
+    document: &DocumentInfo,
+    version: Version,
+    sequence: &SequenceInfo,
+    kind: SemanticKind,
+    route: &[RouteEdge],
+    ranges: &mut Vec<ClassifiedRange>,
+) {
+    ranges.push(ClassifiedRange {
+        range: sequence.range,
+        kind,
+        route: route.to_vec(),
+    });
+    if kind == SemanticKind::Opaque {
+        return;
+    }
+
+    for (index, item) in sequence.items.iter().enumerate() {
+        let Some(child) = version.transition(kind, Edge::SequenceItem(index)) else {
+            continue;
+        };
+        let mut child_route = route.to_vec();
+        child_route.push(RouteEdge::SequenceItem(index));
+        walk_value(
+            document,
+            version,
+            item.value_mapping,
+            item.value_sequence,
+            child,
+            &child_route,
+            ranges,
+        );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn walk_value(
+    document: &DocumentInfo,
+    version: Version,
+    mapping_range: Option<ByteRange>,
+    sequence_range: Option<ByteRange>,
+    kind: SemanticKind,
+    route: &[RouteEdge],
+    ranges: &mut Vec<ClassifiedRange>,
+) {
+    if matches!(
+        kind,
+        SemanticKind::Object(_)
+            | SemanticKind::ObjectOrReference(_)
+            | SemanticKind::Map(_)
+            | SemanticKind::Opaque
+    ) && let Some(range) = mapping_range
+        && let Some(mapping) = find_mapping(document, range)
+    {
+        walk_mapping(document, version, mapping, kind, route, ranges);
+    } else if matches!(kind, SemanticKind::Sequence(_) | SemanticKind::Opaque)
+        && let Some(range) = sequence_range
+        && let Some(sequence) = find_sequence(document, range)
+    {
+        walk_sequence(document, version, sequence, kind, route, ranges);
+    }
+}
+
+fn eligible_operation_ranges(inventory: &ClassificationResult) -> Vec<ByteRange> {
+    let mut operations: Vec<_> = inventory
+        .ranges
+        .iter()
+        .filter(|classified| classified.kind == SemanticKind::Object(ObjectKind::Operation))
+        .filter(|classified| {
+            matches!(
+                classified.route.as_slice(),
+                [
+                    RouteEdge::FixedField(paths),
+                    RouteEdge::DynamicMapValue(path),
+                    RouteEdge::FixedField(method)
+                ] if paths == "paths"
+                    && path.starts_with('/')
+                    && is_fixed_operation_method(method, inventory.version)
+            )
+        })
+        .map(|classified| classified.range)
+        .collect();
     operations.sort_unstable();
     operations.dedup();
     operations
 }
 
-fn child_mapping_range(mapping: &MappingInfo, key: &str) -> Option<ByteRange> {
-    mapping
-        .entries
-        .iter()
-        .find(|entry| entry.key.as_deref() == Some(key))
-        .and_then(|entry| entry.value_mapping)
+fn is_fixed_operation_method(method: &str, version: Version) -> bool {
+    matches!(
+        method,
+        "get" | "put" | "post" | "delete" | "options" | "head" | "patch" | "trace"
+    ) || (version == Version::Oas32 && method == "query")
 }
 
 fn mapping_by_range(
@@ -173,6 +318,13 @@ fn find_mapping(document: &DocumentInfo, range: ByteRange) -> Option<&MappingInf
         .mappings
         .iter()
         .find(|mapping| mapping.range == range)
+}
+
+fn find_sequence(document: &DocumentInfo, range: ByteRange) -> Option<&SequenceInfo> {
+    document
+        .sequences
+        .iter()
+        .find(|sequence| sequence.range == range)
 }
 
 fn map_syntax_error(error: SyntaxError) -> FormatError {

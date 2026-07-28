@@ -2,7 +2,8 @@ use std::collections::HashSet;
 use std::str::FromStr;
 
 use oafmt_syntax::{
-    MAX_INPUT_BYTES, MAX_LINE_BYTES, MAX_MAPPING_ENTRIES, MoveError, move_root_mapping_entry,
+    InputFormat, MAX_INPUT_BYTES, MAX_LINE_BYTES, MAX_MAPPING_ENTRIES, MoveError, inspect_document,
+    move_root_mapping_entry,
 };
 use yaml_edit::{Document, YamlFile, yaml_eq};
 
@@ -12,6 +13,29 @@ enum Preservation {
     SemanticallyPreservedButNormalized,
     IntentionallyTransformed,
     Rejected,
+}
+
+#[test]
+fn neutral_inventory_links_mapping_entries_to_ordered_sequence_items() {
+    let source = "root:\n  values:\n    - first:\n        nested: true\n    - second: false\n";
+    let document = inspect_document(source, InputFormat::Yaml).unwrap();
+    assert_eq!(document.sequences.len(), 1);
+    let sequence = &document.sequences[0];
+    assert_eq!(sequence.items.len(), 2);
+    let first_mapping = sequence.items[0].value_mapping.expect("mapping item");
+    assert!(
+        document
+            .mappings
+            .iter()
+            .any(|mapping| mapping.range == first_mapping)
+    );
+    let values_entry = document
+        .mappings
+        .iter()
+        .flat_map(|mapping| &mapping.entries)
+        .find(|entry| entry.key.as_deref() == Some("values"))
+        .unwrap();
+    assert_eq!(values_entry.value_sequence, Some(sequence.range));
 }
 
 struct MoveCase {

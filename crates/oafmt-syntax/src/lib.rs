@@ -363,6 +363,7 @@ pub struct EntryInfo {
     pub key: Option<String>,
     pub scalar_value: Option<String>,
     pub value_mapping: Option<ByteRange>,
+    pub value_sequence: Option<ByteRange>,
     pub explicit_key: bool,
 }
 
@@ -374,11 +375,27 @@ pub struct MappingInfo {
     pub entries: Vec<EntryInfo>,
 }
 
+/// One sequence item discovered through authoritative CST ranges.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SequenceItemInfo {
+    pub range: ByteRange,
+    pub value_mapping: Option<ByteRange>,
+    pub value_sequence: Option<ByteRange>,
+}
+
+/// A sequence and its ordered direct items.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SequenceInfo {
+    pub range: ByteRange,
+    pub items: Vec<SequenceItemInfo>,
+}
+
 /// Neutral CST facts used by the OpenAPI-aware orchestration layer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DocumentInfo {
     pub root: ByteRange,
     pub mappings: Vec<MappingInfo>,
+    pub sequences: Vec<SequenceInfo>,
     pub anchor_order_risk: bool,
 }
 
@@ -431,7 +448,8 @@ pub fn inspect_document(source: &str, format: InputFormat) -> Result<DocumentInf
     }
 
     let mut mappings = Vec::new();
-    collect_mapping_info(source, &root, &mut mappings)?;
+    let mut sequences = Vec::new();
+    collect_mapping_info(source, &root, &mut mappings, &mut sequences)?;
     let root_range = mapping_byte_range(source, &root);
     let anchor_order_risk = document.syntax().descendants_with_tokens().any(|element| {
         element.as_token().is_some_and(|token| {
@@ -445,6 +463,7 @@ pub fn inspect_document(source: &str, format: InputFormat) -> Result<DocumentInf
     Ok(DocumentInfo {
         root: root_range,
         mappings,
+        sequences,
         anchor_order_risk,
     })
 }
@@ -588,6 +607,7 @@ fn collect_mapping_info(
     source: &str,
     mapping: &yaml_edit::Mapping,
     mappings: &mut Vec<MappingInfo>,
+    sequences: &mut Vec<SequenceInfo>,
 ) -> Result<(), SyntaxError> {
     use rowan::ast::AstNode;
 
@@ -612,6 +632,7 @@ fn collect_mapping_info(
         let value_mapping = value
             .as_mapping()
             .map(|child| mapping_byte_range(source, child));
+        let value_sequence = value.as_sequence().map(sequence_byte_range);
         let range = to_byte_range(entry.syntax().text_range());
         let comma_start = entry
             .syntax()
@@ -635,11 +656,14 @@ fn collect_mapping_info(
             key,
             scalar_value,
             value_mapping,
+            value_sequence,
             explicit_key,
         });
 
         if let Some(child) = value.as_mapping() {
-            collect_mapping_info(source, child, mappings)?;
+            collect_mapping_info(source, child, mappings, sequences)?;
+        } else if let Some(child) = value.as_sequence() {
+            collect_sequence_info(source, child, mappings, sequences)?;
         }
     }
     mappings.push(MappingInfo {
@@ -650,11 +674,62 @@ fn collect_mapping_info(
     Ok(())
 }
 
+fn collect_sequence_info(
+    source: &str,
+    sequence: &yaml_edit::Sequence,
+    mappings: &mut Vec<MappingInfo>,
+    sequences: &mut Vec<SequenceInfo>,
+) -> Result<(), SyntaxError> {
+    let mut items = Vec::new();
+    for value in sequence.values() {
+        let range = yaml_node_byte_range(&value);
+        let value_mapping = value
+            .as_mapping()
+            .map(|child| mapping_byte_range(source, child));
+        let value_sequence = value.as_sequence().map(sequence_byte_range);
+        items.push(SequenceItemInfo {
+            range,
+            value_mapping,
+            value_sequence,
+        });
+
+        if let Some(child) = value.as_mapping() {
+            collect_mapping_info(source, child, mappings, sequences)?;
+        } else if let Some(child) = value.as_sequence() {
+            collect_sequence_info(source, child, mappings, sequences)?;
+        }
+    }
+    sequences.push(SequenceInfo {
+        range: sequence_byte_range(sequence),
+        items,
+    });
+    Ok(())
+}
+
+fn yaml_node_byte_range(node: &YamlNode) -> ByteRange {
+    use rowan::ast::AstNode;
+
+    let range = match node {
+        YamlNode::Scalar(node) => node.syntax().text_range(),
+        YamlNode::Mapping(node) => node.syntax().text_range(),
+        YamlNode::Sequence(node) => node.syntax().text_range(),
+        YamlNode::Alias(node) => node.syntax().text_range(),
+        YamlNode::TaggedNode(node) => node.syntax().text_range(),
+    };
+    to_byte_range(range)
+}
+
 fn to_byte_range(range: rowan::TextRange) -> ByteRange {
     ByteRange {
         start: range.start().into(),
         end: range.end().into(),
     }
+}
+
+fn sequence_byte_range(sequence: &yaml_edit::Sequence) -> ByteRange {
+    use rowan::ast::AstNode;
+
+    to_byte_range(sequence.syntax().text_range())
 }
 
 fn mapping_byte_range(source: &str, mapping: &yaml_edit::Mapping) -> ByteRange {

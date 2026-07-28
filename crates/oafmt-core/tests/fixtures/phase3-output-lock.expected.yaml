@@ -1,0 +1,34 @@
+openapi: 3.2.0
+info:
+  version: v
+  title: Phase 3
+paths:
+  /pets:
+    additionalOperations:
+      COPY:
+        responses: {}
+        summary: additional stays
+    get:
+      summary: eligible get
+      responses: {}
+    query:
+      summary: eligible query
+      responses: {}
+webhooks:
+  event:
+    post:
+      responses: {}
+      summary: webhook stays
+components:
+  pathItems:
+    Shared:
+      get:
+        responses: {}
+        summary: component stays
+  schemas:
+    Pet:
+      properties:
+        name:
+          description: newly classified stays
+          type: string
+      type: object

@@ -3,10 +3,12 @@
 `oafmt` is a deterministic, syntax-preserving formatter for OpenAPI documents.
 It does not lint, resolve references, or perform general OpenAPI validation.
 
-Phase 2 accepts one UTF-8 YAML or strict JSON OpenAPI 3.0.x, 3.1.x, or 3.2.x
-entry document. It reorders only fixed fields at the document root and in
-Operation Objects below `paths`, retaining unknown-field slots and all original
-source slices. The Phase 1 experiment remains historical evidence in
+Phase 3 accepts one UTF-8 YAML or strict JSON OpenAPI 3.0.x, 3.1.x, or 3.2.x
+entry document and classifies reachable OpenAPI objects with version-specific
+semantics. User-visible formatting remains limited to fixed fields at the
+document root and in fixed-method Operation Objects directly below the entry
+document's `paths`, retaining unknown-field slots and all original source
+slices. The Phase 1 experiment remains historical evidence in
 [`PHASE_1_YAML_PRESERVATION.md`](PHASE_1_YAML_PRESERVATION.md).
 
 ```sh

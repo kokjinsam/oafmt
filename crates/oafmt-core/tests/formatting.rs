@@ -39,6 +39,12 @@ const SUCCESS_CASES: &[SuccessCase] = &[
         format: InputFormat::Yaml,
     },
     SuccessCase {
+        name: "Phase 3 classification does not expand formatting eligibility",
+        input: include_str!("fixtures/phase3-output-lock.input.yaml"),
+        expected: include_str!("fixtures/phase3-output-lock.expected.yaml"),
+        format: InputFormat::Yaml,
+    },
+    SuccessCase {
         name: "already ordered bytes including scalar lexemes stay identical",
         input: include_str!("fixtures/noop.yaml"),
         expected: include_str!("fixtures/noop.yaml"),
