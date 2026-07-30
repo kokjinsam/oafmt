@@ -7,6 +7,11 @@ use std::process::ExitCode;
 
 use oafmt_core::{FormatError, InputFormat, format};
 
+mod config;
+mod discovery;
+
+use discovery::{FileInput, normalize_lexically};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Mode {
     Stdout,
@@ -21,17 +26,16 @@ struct Options {
 }
 
 enum Input {
-    Files(Vec<FileInput>),
+    Files {
+        files: Vec<FileInput>,
+        discovery_failures: Vec<discovery::Failure>,
+    },
     Stdin(PathBuf),
-}
-
-struct FileInput {
-    path: PathBuf,
-    key: PathBuf,
 }
 
 struct PreparedFile {
     path: PathBuf,
+    display: PathBuf,
     source: String,
     output: String,
     changed: bool,
@@ -94,14 +98,39 @@ fn run() -> Result<u8, (u8, String)> {
                 }
             }
         }
-        Input::Files(files) => run_files(options.mode, files),
+        Input::Files {
+            files,
+            discovery_failures,
+        } => run_files(options.mode, files, discovery_failures),
     }
 }
 
-fn run_files(mode: Mode, files: Vec<FileInput>) -> Result<u8, (u8, String)> {
-    let preflight: Vec<_> = files
+fn run_files(
+    mode: Mode,
+    files: Vec<FileInput>,
+    discovery_failures: Vec<discovery::Failure>,
+) -> Result<u8, (u8, String)> {
+    let mut keyed_preflight: Vec<_> = files
         .into_iter()
-        .map(|file| preflight_file(mode, file))
+        .map(|file| {
+            let key = file.key.clone();
+            (key, preflight_file(mode, file))
+        })
+        .collect();
+    keyed_preflight.extend(discovery_failures.into_iter().map(|failure| {
+        let key = failure.key.clone();
+        (
+            key.clone(),
+            Preflight::Failed(Failure {
+                severity: 2,
+                message: failure.message,
+            }),
+        )
+    }));
+    keyed_preflight.sort_by(|left, right| left.0.cmp(&right.0));
+    let preflight: Vec<_> = keyed_preflight
+        .into_iter()
+        .map(|(_, result)| result)
         .collect();
 
     match mode {
@@ -125,41 +154,42 @@ fn run_files(mode: Mode, files: Vec<FileInput>) -> Result<u8, (u8, String)> {
 }
 
 fn preflight_file(mode: Mode, input: FileInput) -> Preflight {
-    match prepare_file(mode, &input.path) {
+    match prepare_file(mode, &input.path, &input.display) {
         Ok(file) => Preflight::Ready(file),
         Err((severity, message)) => Preflight::Failed(Failure { severity, message }),
     }
 }
 
-fn prepare_file(mode: Mode, path: &Path) -> Result<PreparedFile, (u8, String)> {
+fn prepare_file(mode: Mode, path: &Path, display: &Path) -> Result<PreparedFile, (u8, String)> {
     let link_metadata = fs::symlink_metadata(path)
-        .map_err(|error| user_error(format!("cannot read {}: {error}", path.display())))?;
+        .map_err(|error| user_error(format!("cannot read {}: {error}", display.display())))?;
     if mode == Mode::Write && link_metadata.file_type().is_symlink() {
         return Err(user_error(format!(
             "cannot replace symlink: {}",
-            path.display()
+            display.display()
         )));
     }
     let metadata = fs::metadata(path)
-        .map_err(|error| user_error(format!("cannot read {}: {error}", path.display())))?;
+        .map_err(|error| user_error(format!("cannot read {}: {error}", display.display())))?;
     if !metadata.is_file() {
         return Err(user_error(format!(
             "input is not a file: {}",
-            path.display()
+            display.display()
         )));
     }
-    let format_kind = infer_format(path)?;
+    let format_kind = infer_format(display)?;
     let source = fs::read_to_string(path)
-        .map_err(|error| user_error(format!("cannot read {}: {error}", path.display())))?;
+        .map_err(|error| user_error(format!("cannot read {}: {error}", display.display())))?;
     let result = format(&source, format_kind).map_err(|error| {
         let (severity, message) = classify_format_error(error);
         (
             severity,
-            format!("cannot format {}: {message}", path.display()),
+            format!("cannot format {}: {message}", display.display()),
         )
     })?;
     Ok(PreparedFile {
         path: path.to_path_buf(),
+        display: display.to_path_buf(),
         source,
         output: result.output,
         changed: result.changed,
@@ -173,7 +203,7 @@ fn run_check(preflight: Vec<Preflight>) -> u8 {
             Preflight::Ready(file) if file.changed => {
                 eprintln!(
                     "oafmt: formatting changes required: {}",
-                    file.path.display()
+                    file.display.display()
                 );
                 severities.push(1);
             }
@@ -195,7 +225,7 @@ fn run_diff(preflight: Vec<Preflight>) -> Result<u8, (u8, String)> {
             Preflight::Ready(file) => {
                 if file.changed {
                     output.push_str(&unified_diff(
-                        &file.path.display().to_string(),
+                        &file.display.display().to_string(),
                         &file.source,
                         &file.output,
                     ));
@@ -235,7 +265,7 @@ fn run_write(preflight: Vec<Preflight>) -> Result<u8, (u8, String)> {
             match atomic_replace(&file.path, file.output.as_bytes()) {
                 Ok(()) => severities.push(0),
                 Err(error) => {
-                    eprintln!("oafmt: cannot replace {}: {error}", file.path.display());
+                    eprintln!("oafmt: cannot replace {}: {error}", file.display.display());
                     severities.push(2);
                 }
             }
@@ -250,6 +280,7 @@ fn parse_args(args: impl Iterator<Item = OsString>) -> Result<Options, (u8, Stri
     let mut args = args.peekable();
     let mut mode = None;
     let mut stdin_path = None;
+    let mut config_path = None;
     let mut files = Vec::new();
 
     while let Some(argument) = args.next() {
@@ -267,6 +298,14 @@ fn parse_args(args: impl Iterator<Item = OsString>) -> Result<Options, (u8, Stri
                 Some(PathBuf::from(args.next().ok_or_else(|| {
                     user_error("--stdin-filepath requires a path")
                 })?));
+        } else if argument == "--config" {
+            if config_path.is_some() {
+                return Err(user_error("--config may be supplied only once"));
+            }
+            config_path = Some(PathBuf::from(
+                args.next()
+                    .ok_or_else(|| user_error("--config requires a path"))?,
+            ));
         } else if argument.to_string_lossy().starts_with('-') {
             return Err(user_error(format!(
                 "unknown option: {}",
@@ -283,8 +322,16 @@ fn parse_args(args: impl Iterator<Item = OsString>) -> Result<Options, (u8, Stri
         ));
     }
     let mode = mode.unwrap_or(Mode::Stdout);
+    if mode == Mode::Stdout && config_path.is_some() {
+        return Err(user_error(
+            "--config is available only with --write, --check, or --diff",
+        ));
+    }
     if mode == Mode::Write && stdin_path.is_some() {
         return Err(user_error("--write cannot be used with --stdin-filepath"));
+    }
+    if config_path.is_some() && stdin_path.is_some() {
+        return Err(user_error("--config cannot be used with --stdin-filepath"));
     }
     if mode == Mode::Stdout && files.len() > 1 {
         return Err(user_error("stdout mode accepts exactly one input file"));
@@ -293,8 +340,19 @@ fn parse_args(args: impl Iterator<Item = OsString>) -> Result<Options, (u8, Stri
         Input::Stdin(path)
     } else if files.is_empty() {
         return Err(user_error("one input file is required"));
+    } else if mode == Mode::Stdout {
+        Input::Files {
+            files: sort_and_deduplicate(files)?,
+            discovery_failures: Vec::new(),
+        }
     } else {
-        Input::Files(sort_and_deduplicate(files)?)
+        let cwd = env::current_dir().ok();
+        let config = config::load(config_path.as_deref(), cwd.as_deref()).map_err(user_error)?;
+        let resolution = discovery::resolve(files, mode, cwd.as_deref(), &config);
+        Input::Files {
+            files: resolution.files,
+            discovery_failures: resolution.failures,
+        }
     };
     Ok(Options { mode, input })
 }
@@ -321,31 +379,18 @@ fn sort_and_deduplicate(paths: Vec<PathBuf>) -> Result<Vec<FileInput>, (u8, Stri
             };
             FileInput {
                 key: normalize_lexically(&absolute),
-                path,
+                path: path.clone(),
+                display: path,
             }
         })
         .collect::<Vec<_>>();
     files.sort_by(|left, right| {
         left.key
             .cmp(&right.key)
-            .then_with(|| left.path.as_os_str().cmp(right.path.as_os_str()))
+            .then_with(|| left.display.as_os_str().cmp(right.display.as_os_str()))
     });
     files.dedup_by(|right, left| right.key == left.key);
     Ok(files)
-}
-
-fn normalize_lexically(path: &Path) -> PathBuf {
-    let mut normalized = PathBuf::new();
-    for component in path.components() {
-        match component {
-            std::path::Component::CurDir => {}
-            std::path::Component::ParentDir => {
-                normalized.pop();
-            }
-            component => normalized.push(component.as_os_str()),
-        }
-    }
-    normalized
 }
 
 fn set_mode(current: &mut Option<Mode>, requested: Mode) -> Result<(), (u8, String)> {

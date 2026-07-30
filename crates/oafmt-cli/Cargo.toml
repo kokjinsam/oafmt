@@ -6,7 +6,11 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+ignore = "0.4"
 oafmt-core = { path = "../oafmt-core" }
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+wax = { version = "=0.7.0", default-features = false }
 
 [[bin]]
 name = "oafmt"
