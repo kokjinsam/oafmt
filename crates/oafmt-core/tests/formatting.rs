@@ -1,3 +1,11 @@
+//! Formatter behavior, preservation, idempotence, and safe-rejection tests.
+#![expect(
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unwrap_used,
+    reason = "test setup and assertions intentionally fail fast on broken fixtures"
+)]
+
 use oafmt_core::{FormatError, InputFormat, format};
 
 struct SuccessCase {

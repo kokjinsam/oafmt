@@ -4,10 +4,15 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Pure orchestration for deterministic, syntax-preserving OpenAPI formatting"
 
 [dependencies]
-oafmt-oas = { path = "../oafmt-oas" }
-oafmt-syntax = { path = "../oafmt-syntax" }
+oafmt-oas = { path = "../oafmt-oas", version = "0.1.0" }
+oafmt-syntax = { path = "../oafmt-syntax", version = "0.1.0" }
 
 [lints]
 workspace = true

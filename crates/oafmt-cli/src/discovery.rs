@@ -10,16 +10,16 @@ use crate::Mode;
 use crate::config::Config;
 
 #[derive(Debug)]
-pub(crate) struct FileInput {
-    pub(crate) path: PathBuf,
-    pub(crate) display: PathBuf,
-    pub(crate) key: PathBuf,
+pub(super) struct FileInput {
+    pub(super) path: PathBuf,
+    pub(super) display: PathBuf,
+    pub(super) key: PathBuf,
 }
 
 #[derive(Debug)]
-pub(crate) struct Failure {
-    pub(crate) key: PathBuf,
-    pub(crate) message: String,
+pub(super) struct Failure {
+    pub(super) key: PathBuf,
+    pub(super) message: String,
 }
 
 #[derive(Debug)]
@@ -29,21 +29,30 @@ struct Candidate {
     explicit: bool,
 }
 
-pub(crate) struct Resolution {
-    pub(crate) files: Vec<FileInput>,
-    pub(crate) failures: Vec<Failure>,
+#[derive(Debug, Default)]
+struct DiscoveryState {
+    selected: BTreeMap<PathBuf, Candidate>,
+    failures: Vec<Failure>,
 }
 
-pub(crate) fn resolve(
+pub(super) struct Resolution {
+    pub(super) files: Vec<FileInput>,
+    pub(super) failures: Vec<Failure>,
+}
+
+pub(super) fn resolve(
     selectors: Vec<PathBuf>,
     mode: Mode,
     cwd: Option<&Path>,
     config: &Config,
-) -> Resolution {
-    let include = compile_set(config.include.as_deref().unwrap_or(&[]));
-    let exclude = compile_set(&config.exclude);
-    let mut selected: BTreeMap<PathBuf, Candidate> = BTreeMap::new();
-    let mut failures = Vec::new();
+) -> Result<Resolution, String> {
+    let include = compile_set(config.include.as_deref().unwrap_or(&[])).map_err(|error| {
+        format!("internal invariant: validated include pattern failed to compile: {error}")
+    })?;
+    let exclude = compile_set(&config.exclude).map_err(|error| {
+        format!("internal invariant: validated exclude pattern failed to compile: {error}")
+    })?;
+    let mut state = DiscoveryState::default();
 
     for selector in selectors {
         let absolute = absolute(&selector, cwd);
@@ -51,7 +60,7 @@ pub(crate) fn resolve(
         let link_metadata = fs::symlink_metadata(&selector);
         let is_glob = is_native_glob(&selector);
         if mode == Mode::Write && !is_glob && prefix_contains_symlink(&selector, cwd) {
-            failures.push(Failure {
+            state.failures.push(Failure {
                 key,
                 message: format!(
                     "cannot discover through symlink in write mode: {}",
@@ -61,21 +70,19 @@ pub(crate) fn resolve(
             continue;
         }
         if is_glob {
-            discover_glob(
-                &selector,
-                mode,
-                cwd,
-                config,
-                exclude.as_deref(),
-                &mut selected,
-                &mut failures,
-            );
+            discover_glob(&selector, mode, cwd, config, exclude.as_deref(), &mut state);
         } else {
             match link_metadata {
                 Ok(_) => match fs::metadata(&selector) {
                     Ok(metadata) if metadata.is_file() => {
                         let identity = fs::canonicalize(&absolute).unwrap_or(key);
-                        insert_candidate(&mut selected, identity.clone(), identity, selector, true);
+                        insert_candidate(
+                            &mut state.selected,
+                            identity.clone(),
+                            identity,
+                            selector,
+                            true,
+                        );
                     }
                     Ok(metadata) if metadata.is_dir() => {
                         discover_directory(
@@ -84,35 +91,35 @@ pub(crate) fn resolve(
                             config,
                             include.as_deref(),
                             exclude.as_deref(),
-                            &mut selected,
-                            &mut failures,
+                            &mut state,
                         );
                     }
-                    Ok(_) => failures.push(Failure {
+                    Ok(_) => state.failures.push(Failure {
                         key,
                         message: format!(
                             "input is not a file or directory: {}",
                             selector.display()
                         ),
                     }),
-                    Err(error) => failures.push(Failure {
+                    Err(error) => state.failures.push(Failure {
                         key,
                         message: format!("cannot read {}: {error}", selector.display()),
                     }),
                 },
                 Err(_) => {
-                    insert_candidate(&mut selected, key, selector.clone(), selector, true);
+                    insert_candidate(&mut state.selected, key, selector.clone(), selector, true);
                 }
             }
         }
     }
 
-    failures.sort_by(|left, right| {
+    state.failures.sort_by(|left, right| {
         left.key
             .cmp(&right.key)
             .then_with(|| left.message.cmp(&right.message))
     });
-    let files = selected
+    let files = state
+        .selected
         .into_iter()
         .map(|(key, candidate)| FileInput {
             path: candidate.path,
@@ -120,18 +127,19 @@ pub(crate) fn resolve(
             key,
         })
         .collect();
-    Resolution { files, failures }
+    Ok(Resolution {
+        files,
+        failures: state.failures,
+    })
 }
 
-#[allow(clippy::too_many_arguments)]
 fn discover_directory(
     display_root: &Path,
     absolute_root: &Path,
     config: &Config,
     include: Option<&[Glob<'static>]>,
     exclude: Option<&[Glob<'static>]>,
-    selected: &mut BTreeMap<PathBuf, Candidate>,
-    failures: &mut Vec<Failure>,
+    state: &mut DiscoveryState,
 ) {
     let walk_root = fs::canonicalize(absolute_root).unwrap_or_else(|_| absolute_root.to_path_buf());
     let mut count = 0;
@@ -143,9 +151,8 @@ fn discover_directory(
                 if !file_type.is_file() || file_type.is_symlink() || !supported_extension(path) {
                     return;
                 }
-                let relative_to_root = match path.strip_prefix(&walk_root) {
-                    Ok(path) => path,
-                    Err(_) => return,
+                let Ok(relative_to_root) = path.strip_prefix(&walk_root) else {
+                    return;
                 };
                 if contains_vcs_metadata(relative_to_root) {
                     return;
@@ -153,19 +160,21 @@ fn discover_directory(
                 let display = display_root.join(relative_to_root);
                 let identity = normalize_lexically(path);
                 let config_relative = relative_path(&config.directory, &identity);
-                let included = match include {
-                    Some(patterns) => matches_any(patterns, &config_relative),
-                    None => matches!(
-                        path.file_name().and_then(OsStr::to_str),
-                        Some("openapi.yaml" | "openapi.yml" | "openapi.json")
-                    ),
-                };
+                let included = include.map_or_else(
+                    || {
+                        matches!(
+                            path.file_name().and_then(OsStr::to_str),
+                            Some("openapi.yaml" | "openapi.yml" | "openapi.json")
+                        )
+                    },
+                    |patterns| matches_any(patterns, &config_relative),
+                );
                 if included
                     && !exclude.is_some_and(|patterns| matches_any(patterns, &config_relative))
                 {
                     count += 1;
                     insert_candidate(
-                        selected,
+                        &mut state.selected,
                         identity,
                         path.to_path_buf(),
                         remove_current_components(&display),
@@ -174,15 +183,15 @@ fn discover_directory(
                 }
             },
             |message| {
-                failures.push(Failure {
+                state.failures.push(Failure {
                     key: normalize_lexically(absolute_root),
                     message,
-                })
+                });
             },
         );
     }
     if count == 0 {
-        failures.push(Failure {
+        state.failures.push(Failure {
             key: normalize_lexically(absolute_root),
             message: format!(
                 "selector produced no supported candidates: {}",
@@ -198,39 +207,104 @@ fn discover_glob(
     cwd: Option<&Path>,
     config: &Config,
     exclude: Option<&[Glob<'static>]>,
-    selected: &mut BTreeMap<PathBuf, Candidate>,
-    failures: &mut Vec<Failure>,
+    state: &mut DiscoveryState,
 ) {
     let Some(pattern) = selector.to_str() else {
-        failures.push(Failure {
+        state.failures.push(Failure {
             key: normalize_lexically(&absolute(selector, cwd)),
             message: format!("glob selector is not valid UTF-8: {}", selector.display()),
         });
         return;
     };
-    let normalized = normalize_pattern(pattern);
-    if let Err(error) = validate_frozen_dialect(&normalized) {
-        failures.push(Failure {
-            key: normalize_lexically(&absolute(selector, cwd)),
-            message: format!("invalid glob selector {pattern:?}: {error}"),
-        });
-        return;
-    }
-    let glob = match Glob::new(&normalized).map(Glob::into_owned) {
-        Ok(glob) => glob,
+    let plan = match prepare_glob(pattern, cwd) {
+        Ok(plan) => plan,
         Err(error) => {
-            failures.push(Failure {
+            state.failures.push(Failure {
                 key: normalize_lexically(&absolute(selector, cwd)),
                 message: format!("invalid glob selector {pattern:?}: {error}"),
             });
             return;
         }
     };
+    if mode == Mode::Write && prefix_contains_symlink(&plan.syntactic_prefix, cwd) {
+        state.failures.push(Failure {
+            key: normalize_lexically(&absolute(selector, cwd)),
+            message: format!(
+                "cannot discover through symlink in write mode: {}",
+                selector.display()
+            ),
+        });
+        return;
+    }
+    let root = absolute(&plan.prefix, cwd);
+    let walk_root = fs::canonicalize(&root).unwrap_or(root);
+    let mut count = 0;
+    if !contains_vcs_metadata(&plan.prefix) && !contains_vcs_metadata(&walk_root) {
+        walk(
+            &walk_root,
+            config.respect_gitignore,
+            |path, file_type| {
+                if !file_type.is_file() || file_type.is_symlink() || !supported_extension(path) {
+                    return;
+                }
+                let Ok(match_path) = path.strip_prefix(&walk_root) else {
+                    return;
+                };
+                if contains_vcs_metadata(match_path) {
+                    return;
+                }
+                let identity = normalize_lexically(path);
+                let config_relative = relative_path(&config.directory, &identity);
+                if plan.matcher.is_match(match_path)
+                    && !exclude.is_some_and(|patterns| matches_any(patterns, &config_relative))
+                {
+                    count += 1;
+                    insert_candidate(
+                        &mut state.selected,
+                        identity,
+                        path.to_path_buf(),
+                        glob_display(&plan.prefix, match_path, cwd),
+                        false,
+                    );
+                }
+            },
+            |message| {
+                state.failures.push(Failure {
+                    key: normalize_lexically(&absolute(selector, cwd)),
+                    message,
+                });
+            },
+        );
+    }
+    if count == 0 {
+        state.failures.push(Failure {
+            key: normalize_lexically(&absolute(selector, cwd)),
+            message: format!(
+                "selector produced no supported candidates: {}",
+                selector.display()
+            ),
+        });
+    }
+}
+
+#[derive(Debug)]
+struct GlobPlan {
+    prefix: PathBuf,
+    matcher: Glob<'static>,
+    syntactic_prefix: PathBuf,
+}
+
+fn prepare_glob(pattern: &str, cwd: Option<&Path>) -> Result<GlobPlan, String> {
+    let normalized = normalize_pattern(pattern);
+    validate_frozen_dialect(&normalized)?;
+    let glob = Glob::new(&normalized)
+        .map(Glob::into_owned)
+        .map_err(|error| error.to_string())?;
     let components = pattern_components(&normalized);
     let first_variant = components
         .iter()
         .position(|component| component_is_variant(component))
-        .expect("native glob selectors contain a syntactically variant component");
+        .ok_or_else(|| "glob has no variant component".to_owned())?;
     let syntactic_prefix =
         path_from_pattern_components(normalized.starts_with('/'), &components[..first_variant]);
     let syntactic_matcher = components[first_variant..].join("/");
@@ -251,70 +325,15 @@ fn discover_glob(
             matcher = format!("{}/{matcher}", components[first_variant - 1]);
         }
         let matcher = Glob::new(&matcher)
-            .expect("the validated glob suffix remains valid")
-            .into_owned();
+            .map(Glob::into_owned)
+            .map_err(|error| format!("validated glob suffix failed to compile: {error}"))?;
         (prefix, matcher)
     };
-    if mode == Mode::Write && prefix_contains_symlink(&syntactic_prefix, cwd) {
-        failures.push(Failure {
-            key: normalize_lexically(&absolute(selector, cwd)),
-            message: format!(
-                "cannot discover through symlink in write mode: {}",
-                selector.display()
-            ),
-        });
-        return;
-    }
-    let root = absolute(&prefix, cwd);
-    let walk_root = fs::canonicalize(&root).unwrap_or(root);
-    let mut count = 0;
-    if !contains_vcs_metadata(&prefix) && !contains_vcs_metadata(&walk_root) {
-        walk(
-            &walk_root,
-            config.respect_gitignore,
-            |path, file_type| {
-                if !file_type.is_file() || file_type.is_symlink() || !supported_extension(path) {
-                    return;
-                }
-                let match_path = match path.strip_prefix(&walk_root) {
-                    Ok(path) => path,
-                    Err(_) => return,
-                };
-                if contains_vcs_metadata(match_path) {
-                    return;
-                }
-                let identity = normalize_lexically(path);
-                let config_relative = relative_path(&config.directory, &identity);
-                if matcher.is_match(match_path)
-                    && !exclude.is_some_and(|patterns| matches_any(patterns, &config_relative))
-                {
-                    count += 1;
-                    insert_candidate(
-                        selected,
-                        identity,
-                        path.to_path_buf(),
-                        glob_display(&prefix, match_path, cwd),
-                        false,
-                    );
-                }
-            },
-            |message| {
-                failures.push(Failure {
-                    key: normalize_lexically(&absolute(selector, cwd)),
-                    message,
-                })
-            },
-        );
-    }
-    if count == 0 {
-        failures.push(Failure {
-            key: normalize_lexically(&absolute(selector, cwd)),
-            message: format!(
-                "selector produced no supported candidates: {}",
-                selector.display()
-            ),
-        });
-    }
+    Ok(GlobPlan {
+        prefix,
+        matcher,
+        syntactic_prefix,
+    })
 }
 
 fn prefix_contains_symlink(invariant_prefix: &Path, cwd: Option<&Path>) -> bool {
@@ -325,17 +344,18 @@ fn prefix_contains_symlink(invariant_prefix: &Path, cwd: Option<&Path>) -> bool 
     };
     for component in invariant_prefix.components() {
         match component {
-            Component::CurDir => continue,
+            Component::CurDir => {}
             Component::RootDir | Component::Prefix(_) => {
                 prefix.push(component.as_os_str());
-                continue;
             }
             Component::ParentDir | Component::Normal(_) => {
                 prefix.push(component.as_os_str());
+                if fs::symlink_metadata(&prefix)
+                    .is_ok_and(|metadata| metadata.file_type().is_symlink())
+                {
+                    return true;
+                }
             }
-        }
-        if fs::symlink_metadata(&prefix).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
-            return true;
         }
     }
     false
@@ -404,7 +424,7 @@ fn symlink_precedes_parent(path: &Path, cwd: Option<&Path>) -> bool {
     let mut saw_symlink = false;
     for component in path.components() {
         match component {
-            Component::CurDir => continue,
+            Component::CurDir => {}
             Component::RootDir | Component::Prefix(_) => {
                 prefix.push(component.as_os_str());
             }
@@ -448,8 +468,8 @@ fn insert_candidate(
                 || (explicit == current.explicit
                     && display.as_os_str() < current.display.as_os_str())
             {
-                current.path = path.clone();
-                current.display = display.clone();
+                current.path.clone_from(&path);
+                current.display.clone_from(&display);
                 current.explicit = explicit;
             }
         })
@@ -460,21 +480,18 @@ fn insert_candidate(
         });
 }
 
-fn compile_set(patterns: &[String]) -> Option<Vec<Glob<'static>>> {
+fn compile_set(patterns: &[String]) -> Result<Option<Vec<Glob<'static>>>, String> {
     if patterns.is_empty() {
-        return None;
+        return Ok(None);
     }
-    Some(
-        patterns
-            .iter()
-            .map(|pattern| {
-                compile_frozen_pattern(pattern).expect("configuration patterns were validated")
-            })
-            .collect(),
-    )
+    patterns
+        .iter()
+        .map(|pattern| compile_frozen_pattern(pattern))
+        .collect::<Result<Vec<_>, _>>()
+        .map(Some)
 }
 
-pub(crate) fn validate_pattern(pattern: &str) -> Result<(), String> {
+pub(super) fn validate_pattern(pattern: &str) -> Result<(), String> {
     compile_frozen_pattern(pattern).map(|_| ())
 }
 
@@ -569,9 +586,8 @@ fn component_is_variant(component: &str) -> bool {
     let mut in_character_class = false;
     for character in component.chars() {
         match character {
-            '[' if !in_character_class => return true,
+            '[' | '*' | '?' if !in_character_class => return true,
             ']' if in_character_class => in_character_class = false,
-            '*' | '?' if !in_character_class => return true,
             _ => {}
         }
     }
@@ -605,8 +621,7 @@ fn supported_extension(path: &Path) -> bool {
 fn discovered_display(identity: &Path, cwd: Option<&Path>) -> PathBuf {
     cwd.and_then(|cwd| identity.strip_prefix(cwd).ok())
         .filter(|path| !path.as_os_str().is_empty())
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| identity.to_path_buf())
+        .map_or_else(|| identity.to_path_buf(), Path::to_path_buf)
 }
 
 fn absolute(path: &Path, cwd: Option<&Path>) -> PathBuf {
@@ -638,7 +653,7 @@ fn relative_path(base: &Path, target: &Path) -> PathBuf {
     relative
 }
 
-pub(crate) fn normalize_lexically(path: &Path) -> PathBuf {
+pub(super) fn normalize_lexically(path: &Path) -> PathBuf {
     let mut normalized = PathBuf::new();
     for component in path.components() {
         match component {

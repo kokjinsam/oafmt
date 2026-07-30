@@ -1,4 +1,9 @@
 //! Pure formatting orchestration for `oafmt`.
+//!
+//! The core accepts explicit syntax and source text, applies version-aware
+//! ordering, and verifies preservation without filesystem or process effects.
+//! Formatting is deterministic and idempotent; classification is not OpenAPI
+//! validation.
 
 use std::fmt;
 
@@ -11,44 +16,58 @@ use oafmt_syntax::{
 /// Explicit input syntax. No filename or content sniffing occurs in the core.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InputFormat {
+    /// YAML syntax.
     Yaml,
+    /// Strict JSON syntax.
     Json,
 }
 
 /// A successful deterministic formatting result.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FormatResult {
+    /// Complete formatted document bytes as UTF-8 text.
     pub output: String,
+    /// Whether `output` differs from the input.
     pub changed: bool,
 }
 
 /// One provenance step from the entry-document root.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RouteEdge {
+    /// A fixed field declared by an OpenAPI Object.
     FixedField(String),
+    /// A dynamic key inside an object or map.
     DynamicMapValue(String),
+    /// A zero-based sequence position.
     SequenceItem(usize),
 }
 
 /// A syntax range with its OpenAPI semantic expectation and complete route.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClassifiedRange {
+    /// Syntax range occupied by the classified value.
     pub range: ByteRange,
+    /// OpenAPI semantic expectation at the range.
     pub kind: SemanticKind,
+    /// Complete route from the entry-document root.
     pub route: Vec<RouteEdge>,
 }
 
 /// The semantic inventory for one supported OpenAPI entry document.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClassificationResult {
+    /// Supported OpenAPI version family declared by the entry document.
     pub version: Version,
+    /// Reachable classified mapping and sequence ranges.
     pub ranges: Vec<ClassifiedRange>,
 }
 
 /// Caller/input failures and formatter invariant failures.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FormatError {
+    /// Caller input cannot be safely formatted or classified.
     Input(String),
+    /// A formatter preservation or implementation invariant failed.
     InternalInvariant(String),
 }
 
@@ -63,6 +82,12 @@ impl fmt::Display for FormatError {
 impl std::error::Error for FormatError {}
 
 /// Format one OpenAPI entry document without filesystem or process effects.
+///
+/// # Errors
+///
+/// Returns [`FormatError::Input`] for unsupported input and
+/// [`FormatError::InternalInvariant`] when formatting cannot prove that its
+/// output reparses with unchanged semantics.
 pub fn format(source: &str, format: InputFormat) -> Result<FormatResult, FormatError> {
     let syntax_format = match format {
         InputFormat::Yaml => oafmt_syntax::InputFormat::Yaml,
@@ -85,7 +110,7 @@ pub fn format(source: &str, format: InputFormat) -> Result<FormatResult, FormatE
     let operations_formatted =
         reorder_mappings(source, &operation_edits, syntax_format).map_err(map_syntax_error)?;
     let reparsed = inspect_document(&operations_formatted, syntax_format)
-        .map_err(|error| internal_reparse_error("operation formatting", error))?;
+        .map_err(|error| internal_reparse_error("operation formatting", &error))?;
     let reparsed_root = mapping_by_range(&reparsed, reparsed.root)?;
     let root_formatted = reorder_mappings(
         &operations_formatted,
@@ -102,7 +127,7 @@ pub fn format(source: &str, format: InputFormat) -> Result<FormatResult, FormatE
     }
 
     inspect_document(&root_formatted, syntax_format)
-        .map_err(|error| internal_reparse_error("root formatting", error))?;
+        .map_err(|error| internal_reparse_error("root formatting", &error))?;
     validate_semantic_preservation(source, &root_formatted, syntax_format)
         .map_err(map_syntax_error)?;
 
@@ -113,6 +138,12 @@ pub fn format(source: &str, format: InputFormat) -> Result<FormatResult, FormatE
 }
 
 /// Classify reachable mappings and sequences without formatting them.
+///
+/// # Errors
+///
+/// Returns [`FormatError::Input`] when the syntax, root shape, or declared
+/// OpenAPI version is unsupported, and [`FormatError::InternalInvariant`] when
+/// an inspected CST range cannot be resolved.
 pub fn classify(source: &str, format: InputFormat) -> Result<ClassificationResult, FormatError> {
     let syntax_format = match format {
         InputFormat::Yaml => oafmt_syntax::InputFormat::Yaml,
@@ -201,8 +232,10 @@ fn walk_mapping(
         walk_value(
             document,
             version,
-            entry.value_mapping,
-            entry.value_sequence,
+            ValueRanges {
+                mapping: entry.value_mapping,
+                sequence: entry.value_sequence,
+            },
             child,
             &child_route,
             ranges,
@@ -236,8 +269,10 @@ fn walk_sequence(
         walk_value(
             document,
             version,
-            item.value_mapping,
-            item.value_sequence,
+            ValueRanges {
+                mapping: item.value_mapping,
+                sequence: item.value_sequence,
+            },
             child,
             &child_route,
             ranges,
@@ -245,30 +280,39 @@ fn walk_sequence(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[derive(Debug, Clone, Copy)]
+struct ValueRanges {
+    mapping: Option<ByteRange>,
+    sequence: Option<ByteRange>,
+}
+
 fn walk_value(
     document: &DocumentInfo,
     version: Version,
-    mapping_range: Option<ByteRange>,
-    sequence_range: Option<ByteRange>,
+    value: ValueRanges,
     kind: SemanticKind,
     route: &[RouteEdge],
     ranges: &mut Vec<ClassifiedRange>,
 ) {
-    if matches!(
+    let mapping = matches!(
         kind,
         SemanticKind::Object(_)
             | SemanticKind::ObjectOrReference(_)
             | SemanticKind::Map(_)
             | SemanticKind::Opaque
-    ) && let Some(range) = mapping_range
-        && let Some(mapping) = find_mapping(document, range)
-    {
+    )
+    .then_some(value.mapping)
+    .flatten()
+    .and_then(|range| find_mapping(document, range));
+    if let Some(mapping) = mapping {
         walk_mapping(document, version, mapping, kind, route, ranges);
-    } else if matches!(kind, SemanticKind::Sequence(_) | SemanticKind::Opaque)
-        && let Some(range) = sequence_range
-        && let Some(sequence) = find_sequence(document, range)
-    {
+        return;
+    }
+    let sequence = matches!(kind, SemanticKind::Sequence(_) | SemanticKind::Opaque)
+        .then_some(value.sequence)
+        .flatten()
+        .and_then(|range| find_sequence(document, range));
+    if let Some(sequence) = sequence {
         walk_sequence(document, version, sequence, kind, route, ranges);
     }
 }
@@ -334,6 +378,6 @@ fn map_syntax_error(error: SyntaxError) -> FormatError {
     }
 }
 
-fn internal_reparse_error(stage: &str, error: SyntaxError) -> FormatError {
+fn internal_reparse_error(stage: &str, error: &SyntaxError) -> FormatError {
     FormatError::InternalInvariant(format!("{stage} produced invalid output: {error}"))
 }

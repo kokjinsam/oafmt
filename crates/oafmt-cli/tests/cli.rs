@@ -1,3 +1,10 @@
+//! End-to-end CLI stream, exit, discovery, preflight, and mutation contracts.
+#![expect(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    reason = "test setup and assertions intentionally fail fast on fixture or subprocess failure"
+)]
+
 use std::fs;
 use std::io::Write;
 use std::os::unix::fs::{PermissionsExt, symlink};
@@ -1775,19 +1782,19 @@ fn run_with_stdin_command(command: &mut Command, input: &str) -> std::process::O
     child.wait_with_output().unwrap()
 }
 
-fn input_yaml() -> &'static str {
+const fn input_yaml() -> &'static str {
     include_str!("../../oafmt-core/tests/fixtures/basic.input.yaml")
 }
 
-fn expected_yaml() -> &'static str {
+const fn expected_yaml() -> &'static str {
     include_str!("../../oafmt-core/tests/fixtures/basic.expected.yaml")
 }
 
-fn input_json() -> &'static str {
+const fn input_json() -> &'static str {
     include_str!("../../oafmt-core/tests/fixtures/basic.input.json")
 }
 
-fn expected_json() -> &'static str {
+const fn expected_json() -> &'static str {
     include_str!("../../oafmt-core/tests/fixtures/basic.expected.json")
 }
 

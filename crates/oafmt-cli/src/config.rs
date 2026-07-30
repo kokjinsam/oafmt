@@ -6,11 +6,11 @@ use serde::Deserialize;
 use crate::discovery::{normalize_lexically, validate_pattern};
 
 #[derive(Debug)]
-pub(crate) struct Config {
-    pub(crate) directory: PathBuf,
-    pub(crate) include: Option<Vec<String>>,
-    pub(crate) exclude: Vec<String>,
-    pub(crate) respect_gitignore: bool,
+pub(super) struct Config {
+    pub(super) directory: PathBuf,
+    pub(super) include: Option<Vec<String>>,
+    pub(super) exclude: Vec<String>,
+    pub(super) respect_gitignore: bool,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -29,11 +29,11 @@ struct DiscoveryConfig {
     respect_gitignore: bool,
 }
 
-fn default_true() -> bool {
+const fn default_true() -> bool {
     true
 }
 
-pub(crate) fn load(explicit: Option<&Path>, cwd: Option<&Path>) -> Result<Config, String> {
+pub(super) fn load(explicit: Option<&Path>, cwd: Option<&Path>) -> Result<Config, String> {
     let path = match explicit {
         Some(path) => {
             let path = if path.is_absolute() {
@@ -98,7 +98,7 @@ pub(crate) fn load(explicit: Option<&Path>, cwd: Option<&Path>) -> Result<Config
     })
 }
 
-fn default_config(directory: PathBuf) -> Config {
+const fn default_config(directory: PathBuf) -> Config {
     Config {
         directory,
         include: None,

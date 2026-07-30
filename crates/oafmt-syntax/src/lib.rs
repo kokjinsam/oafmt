@@ -103,6 +103,11 @@ impl std::error::Error for MoveError {}
 /// Explicit-key layouts and ambiguous source-text reconciliation are rejected.
 /// Output reparsing and semantic comparison are structural backstops; they do
 /// not prove comment ownership.
+///
+/// # Errors
+///
+/// Returns [`MoveError`] when input limits, YAML shape, key uniqueness, source
+/// ranges, or anchor ordering make the requested movement unsafe.
 pub fn move_root_mapping_entry(source: &str, key: &str, to: usize) -> Result<String, MoveError> {
     check_resource_limits(source)?;
 
@@ -231,15 +236,19 @@ fn is_permitted_inter_entry_trivia(trivia: &str) -> bool {
 }
 
 fn split_trailing_line_ending(block: &str) -> (&str, &str) {
-    if let Some(block) = block.strip_suffix("\r\n") {
-        (block, "\r\n")
-    } else if let Some(block) = block.strip_suffix('\n') {
-        (block, "\n")
-    } else if let Some(block) = block.strip_suffix('\r') {
-        (block, "\r")
-    } else {
-        (block, "")
-    }
+    block.strip_suffix("\r\n").map_or_else(
+        || {
+            block.strip_suffix('\n').map_or_else(
+                || {
+                    block
+                        .strip_suffix('\r')
+                        .map_or((block, ""), |block| (block, "\r"))
+                },
+                |block| (block, "\n"),
+            )
+        },
+        |block| (block, "\r\n"),
+    )
 }
 
 fn split_entry_blocks<'a>(
@@ -272,7 +281,10 @@ fn split_entry_blocks<'a>(
     for index in 1..spans.len() {
         blocks.push(&source[spans[index - 1].1..spans[index].1]);
     }
-    let suffix = &source[spans.last().expect("entries are non-empty").1..];
+    let Some((_, final_end)) = spans.last() else {
+        return Err(MoveError::UntrustworthySourceRange);
+    };
+    let suffix = &source[*final_end..];
     Ok((prefix, blocks, suffix))
 }
 
@@ -344,65 +356,90 @@ fn validate_rendered_output(
 /// Concrete input syntax selected explicitly by the caller.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InputFormat {
+    /// YAML syntax.
     Yaml,
+    /// Strict JSON syntax.
     Json,
 }
 
 /// A half-open byte range in the original UTF-8 source.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ByteRange {
+    /// Inclusive start byte.
     pub start: usize,
+    /// Exclusive end byte.
     pub end: usize,
 }
 
 /// One mapping entry discovered through authoritative CST ranges.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EntryInfo {
+    /// Complete entry range, including its trailing comma when present.
     pub range: ByteRange,
+    /// Entry range excluding its trailing comma.
     pub content_range: ByteRange,
+    /// Decoded string key, when the key is a string.
     pub key: Option<String>,
+    /// Decoded scalar value, when the value is a string scalar.
     pub scalar_value: Option<String>,
+    /// Range of a direct mapping value.
     pub value_mapping: Option<ByteRange>,
+    /// Range of a direct sequence value.
     pub value_sequence: Option<ByteRange>,
+    /// Whether the entry uses explicit-key YAML syntax.
     pub explicit_key: bool,
 }
 
 /// A mapping and its direct entries.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MappingInfo {
+    /// Complete mapping range.
     pub range: ByteRange,
+    /// Whether the mapping uses flow syntax.
     pub flow_style: bool,
+    /// Direct mapping entries in source order.
     pub entries: Vec<EntryInfo>,
 }
 
 /// One sequence item discovered through authoritative CST ranges.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SequenceItemInfo {
+    /// Complete item value range.
     pub range: ByteRange,
+    /// Range of a direct mapping value.
     pub value_mapping: Option<ByteRange>,
+    /// Range of a direct sequence value.
     pub value_sequence: Option<ByteRange>,
 }
 
 /// A sequence and its ordered direct items.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SequenceInfo {
+    /// Complete sequence range.
     pub range: ByteRange,
+    /// Direct sequence items in source order.
     pub items: Vec<SequenceItemInfo>,
 }
 
 /// Neutral CST facts used by the OpenAPI-aware orchestration layer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DocumentInfo {
+    /// Root mapping range.
     pub root: ByteRange,
+    /// All mappings reachable from the document.
     pub mappings: Vec<MappingInfo>,
+    /// All sequences reachable from the document.
     pub sequences: Vec<SequenceInfo>,
+    /// Whether reordering could affect anchors, aliases, or merge keys.
     pub anchor_order_risk: bool,
 }
 
 /// A production parse/edit failure.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SyntaxError {
+    /// Input cannot be handled without weakening syntax or resource contracts.
     InvalidInput(String),
+    /// An internal formatter assumption failed.
     InternalInvariant(String),
 }
 
@@ -419,6 +456,11 @@ impl fmt::Display for SyntaxError {
 impl std::error::Error for SyntaxError {}
 
 /// Parse one accepted document and expose mapping relationships and CST ranges.
+///
+/// # Errors
+///
+/// Returns [`SyntaxError::InvalidInput`] when resource limits, syntax, document
+/// count, or root shape are unsupported.
 pub fn inspect_document(source: &str, format: InputFormat) -> Result<DocumentInfo, SyntaxError> {
     use rowan::ast::AstNode;
 
@@ -469,6 +511,11 @@ pub fn inspect_document(source: &str, format: InputFormat) -> Result<DocumentInf
 }
 
 /// Reorder known entries in each non-overlapping mapping while retaining unknown slots.
+///
+/// # Errors
+///
+/// Returns [`SyntaxError`] when a mapping cannot be reordered without loss or
+/// when supplied mapping ranges violate internal formatter invariants.
 pub fn reorder_mappings(
     source: &str,
     mappings: &[(&MappingInfo, &[&str])],
@@ -504,6 +551,11 @@ pub fn reorder_mappings(
 }
 
 /// Reparse and compare complete document semantics.
+///
+/// # Errors
+///
+/// Returns [`SyntaxError::InvalidInput`] when strict JSON parsing fails and
+/// [`SyntaxError::InternalInvariant`] when formatted output changes semantics.
 pub fn validate_semantic_preservation(
     before: &str,
     after: &str,
@@ -618,17 +670,20 @@ fn collect_mapping_info(
         let value = entry
             .value_node()
             .ok_or_else(|| SyntaxError::InvalidInput("mapping entry has no value".into()))?;
-        let scalar_value = if let Some(scalar) = value.as_scalar() {
-            let decoded = scalar.as_string();
-            yaml_eq(scalar, &decoded).then_some(decoded)
-        } else {
-            value.as_tagged().and_then(|tagged| {
-                (tagged.tag().as_deref() == Some("!!str"))
-                    .then(|| tagged.value())
-                    .flatten()
-                    .map(|scalar| scalar.as_string())
-            })
-        };
+        let scalar_value = value.as_scalar().map_or_else(
+            || {
+                value.as_tagged().and_then(|tagged| {
+                    (tagged.tag().as_deref() == Some("!!str"))
+                        .then(|| tagged.value())
+                        .flatten()
+                        .map(|scalar| scalar.as_string())
+                })
+            },
+            |scalar| {
+                let decoded = scalar.as_string();
+                yaml_eq(scalar, &decoded).then_some(decoded)
+            },
+        );
         let value_mapping = value
             .as_mapping()
             .map(|child| mapping_byte_range(source, child));
@@ -637,7 +692,7 @@ fn collect_mapping_info(
         let comma_start = entry
             .syntax()
             .children_with_tokens()
-            .filter_map(|element| element.into_token())
+            .filter_map(rowan::NodeOrToken::into_token)
             .find(|token| token.kind() == SyntaxKind::COMMA)
             .map(|token| usize::from(token.text_range().start()));
         let content_range = ByteRange {
@@ -647,7 +702,7 @@ fn collect_mapping_info(
         let explicit_key = entry
             .syntax()
             .children_with_tokens()
-            .filter_map(|element| element.into_token())
+            .filter_map(rowan::NodeOrToken::into_token)
             .any(|token| token.kind() == SyntaxKind::QUESTION);
 
         entries.push(EntryInfo {
@@ -788,37 +843,39 @@ fn render_mapping(
         })?;
         if !seen.insert(key) {
             return Err(SyntaxError::InvalidInput(format!(
-                "duplicate mapping key at formatted location: {:?}",
-                key
+                "duplicate mapping key at formatted location: {key:?}"
             )));
         }
     }
 
-    let mut desired: Vec<usize> = mapping
+    let mut desired: Vec<(usize, usize)> = mapping
         .entries
         .iter()
         .enumerate()
-        .filter(|(_, entry)| entry.key.as_deref().is_some_and(|key| order.contains(&key)))
-        .map(|(index, _)| index)
+        .filter_map(|(index, entry)| {
+            entry.key.as_deref().and_then(|entry_key| {
+                order
+                    .iter()
+                    .position(|ordered_key| *ordered_key == entry_key)
+                    .map(|position| (index, position))
+            })
+        })
         .collect();
-    desired.sort_by_key(|index| {
-        order
-            .iter()
-            .position(|key| Some(*key) == mapping.entries[*index].key.as_deref())
-            .expect("known entry has an order")
-    });
+    desired.sort_by_key(|(_, position)| *position);
 
     let mut source_indices: Vec<usize> = (0..mapping.entries.len()).collect();
-    let mut desired = desired.into_iter();
+    let mut desired = desired.into_iter().map(|(index, _)| index);
     for (index, source_index) in source_indices.iter_mut().enumerate() {
         if mapping.entries[index]
             .key
             .as_deref()
             .is_some_and(|key| order.contains(&key))
         {
-            *source_index = desired
-                .next()
-                .expect("known positions and entries have equal counts");
+            *source_index = desired.next().ok_or_else(|| {
+                SyntaxError::InternalInvariant(
+                    "known mapping positions and entries have different counts".into(),
+                )
+            })?;
         }
     }
     if source_indices.iter().copied().eq(0..mapping.entries.len()) {
@@ -836,8 +893,11 @@ fn render_block_mapping(
     mapping: &MappingInfo,
     source_indices: &[usize],
 ) -> Result<String, SyntaxError> {
-    let first = mapping.entries.first().expect("mapping is non-empty");
-    let last = mapping.entries.last().expect("mapping is non-empty");
+    let (Some(first), Some(last)) = (mapping.entries.first(), mapping.entries.last()) else {
+        return Err(SyntaxError::InternalInvariant(
+            "cannot render an empty YAML mapping".into(),
+        ));
+    };
     let suffix = &source[last.range.end..mapping.range.end];
     let mut attached = Vec::with_capacity(mapping.entries.len());
     let mut slot_indents = Vec::with_capacity(mapping.entries.len());
@@ -883,13 +943,13 @@ fn render_block_mapping(
 }
 
 fn split_final_line_indent(gap: &str) -> (&str, &str) {
-    if let Some(last_newline) = gap.rfind('\n') {
-        gap.split_at(last_newline + 1)
-    } else if let Some(last_return) = gap.rfind('\r') {
-        gap.split_at(last_return + 1)
-    } else {
-        ("", gap)
-    }
+    gap.rfind('\n').map_or_else(
+        || {
+            gap.rfind('\r')
+                .map_or(("", gap), |last_return| gap.split_at(last_return + 1))
+        },
+        |last_newline| gap.split_at(last_newline + 1),
+    )
 }
 
 fn render_json_mapping(
@@ -897,8 +957,11 @@ fn render_json_mapping(
     mapping: &MappingInfo,
     source_indices: &[usize],
 ) -> Result<String, SyntaxError> {
-    let first = mapping.entries.first().expect("mapping is non-empty");
-    let last = mapping.entries.last().expect("mapping is non-empty");
+    let (Some(first), Some(last)) = (mapping.entries.first(), mapping.entries.last()) else {
+        return Err(SyntaxError::InternalInvariant(
+            "cannot render an empty JSON mapping".into(),
+        ));
+    };
     let prefix = &source[mapping.range.start..first.content_range.start];
     let suffix = &source[last.content_range.end..mapping.range.end];
     let separators: Vec<_> = mapping

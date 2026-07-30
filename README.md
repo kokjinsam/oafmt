@@ -90,7 +90,12 @@ cargo fmt --all -- --check
 cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 cargo test --locked --workspace --all-features
 cargo build --locked --workspace --all-features
+RUSTDOCFLAGS="-D warnings" cargo doc --locked --workspace --all-features --no-deps
+cargo deny --locked check
 ```
+
+Maximum-policy linting uses Rust and Clippy 1.97.1. The declared MSRV remains
+Rust 1.85 and is checked separately in CI.
 
 ## License
 

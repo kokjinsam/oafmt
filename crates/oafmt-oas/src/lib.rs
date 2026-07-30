@@ -1,111 +1,189 @@
 //! Version-specific OpenAPI semantic classification for `oafmt`.
+//!
+//! This crate describes where OpenAPI objects occur for the supported 3.0,
+//! 3.1, and 3.2 families. Classification is deliberately not validation:
+//! unknown or instance-valued content becomes opaque instead of being rejected.
 
 /// The supported OpenAPI minor families.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Version {
+    /// OpenAPI 3.0.x.
     Oas30,
+    /// OpenAPI 3.1.x.
     Oas31,
+    /// OpenAPI 3.2.x.
     Oas32,
 }
 
-/// A named Object in the OpenAPI specification.
+/// A named Object in the `OpenAPI` specification.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ObjectKind {
+    /// The entry document's OpenAPI Object.
     OpenApi,
+    /// An Info Object.
     Info,
+    /// A Contact Object.
     Contact,
+    /// A License Object.
     License,
+    /// A Server Object.
     Server,
+    /// A Server Variable Object.
     ServerVariable,
+    /// A Components Object.
     Components,
+    /// A Paths Object.
     Paths,
+    /// A Path Item Object.
     PathItem,
+    /// An Operation Object.
     Operation,
+    /// An External Documentation Object.
     ExternalDocumentation,
+    /// A Parameter Object.
     Parameter,
+    /// A Request Body Object.
     RequestBody,
+    /// A Media Type Object.
     MediaType,
+    /// An Encoding Object.
     Encoding,
+    /// A Responses Object.
     Responses,
+    /// A Response Object.
     Response,
+    /// A Callback Object.
     Callback,
+    /// An Example Object.
     Example,
+    /// A Link Object.
     Link,
+    /// A Header Object.
     Header,
+    /// A Tag Object.
     Tag,
+    /// A Reference Object.
     Reference,
+    /// A Schema Object.
     Schema,
+    /// A Discriminator Object.
     Discriminator,
+    /// An XML Object.
     Xml,
+    /// A Security Scheme Object.
     SecurityScheme,
+    /// An OAuth Flows Object.
     OAuthFlows,
+    /// An OAuth Flow Object.
     OAuthFlow,
+    /// A Security Requirement Object.
     SecurityRequirement,
 }
 
 /// A context-defined mapping whose keys name its values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum MapKind {
+    /// Entry-document webhook names to Path Item Objects.
     Webhooks,
+    /// Server variable names to Server Variable Objects.
     ServerVariables,
+    /// Component names to reusable Schema Objects.
     ComponentSchemas,
+    /// Component names to reusable Response Objects.
     ComponentResponses,
+    /// Component names to reusable Parameter Objects.
     ComponentParameters,
+    /// Component names to reusable Example Objects.
     ComponentExamples,
+    /// Component names to reusable Request Body Objects.
     ComponentRequestBodies,
+    /// Component names to reusable Header Objects.
     ComponentHeaders,
+    /// Component names to reusable Security Scheme Objects.
     ComponentSecuritySchemes,
+    /// Component names to reusable Link Objects.
     ComponentLinks,
+    /// Component names to reusable Callback Objects.
     ComponentCallbacks,
+    /// Component names to reusable Path Item Objects.
     ComponentPathItems,
+    /// Component names to reusable Media Type Objects.
     ComponentMediaTypes,
+    /// Media type names to Media Type Objects.
     Content,
+    /// Callback names to Callback Objects.
     Callbacks,
+    /// Header names to Header Objects.
     Headers,
+    /// Example names to Example Objects.
     Examples,
+    /// Link names to Link Objects.
     Links,
+    /// Property names to Encoding Objects.
     Encodings,
+    /// Additional HTTP method names to Operation Objects.
     AdditionalOperations,
+    /// Schema property names to Schema Objects.
     SchemaProperties,
+    /// Schema patterns to Schema Objects.
     SchemaPatternProperties,
+    /// Schema definition names to Schema Objects.
     SchemaDefinitions,
+    /// Schema property names to dependent Schema Objects.
     SchemaDependentSchemas,
 }
 
 /// A context-defined sequence whose positions contain semantic values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum SequenceKind {
+    /// A sequence of Server Objects.
     Servers,
+    /// A sequence of Tag Objects.
     Tags,
+    /// A sequence of Parameter Objects or references.
     Parameters,
+    /// A sequence of Security Requirement Objects.
     SecurityRequirements,
+    /// A sequence of Schema Objects or references.
     Schemas,
+    /// A sequence of Encoding Objects.
     Encodings,
 }
 
 /// The semantic expectation at a syntax value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum SemanticKind {
+    /// A concrete object of the given kind.
     Object(ObjectKind),
+    /// An object of the given kind or a Reference Object.
     ObjectOrReference(ObjectKind),
+    /// A context-defined string-keyed map.
     Map(MapKind),
+    /// A context-defined ordered sequence.
     Sequence(SequenceKind),
+    /// Content whose interior is intentionally not classified.
     Opaque,
 }
 
 /// The syntax edge used to enter a child value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Edge<'a> {
+    /// A fixed field name declared by an OpenAPI Object.
     FixedField(&'a str),
+    /// A dynamic key inside an object or map.
     DynamicMapValue(&'a str),
+    /// A zero-based position inside a sequence.
     SequenceItem(usize),
 }
 
 /// One table-backed fixed-field transition.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FixedTransition {
+    /// Object containing the fixed field.
     pub parent: ObjectKind,
+    /// Fixed field name.
     pub field: &'static str,
+    /// Semantic expectation for the field value.
     pub child: SemanticKind,
 }
 
@@ -346,6 +424,7 @@ const fn fixed(parent: ObjectKind, field: &'static str, child: SemanticKind) -> 
 
 impl Version {
     /// Parse a complete supported `openapi` version string.
+    #[must_use]
     pub fn parse(value: &str) -> Option<Self> {
         let mut parts = value.split('.');
         let major = parts.next()?;
@@ -367,7 +446,8 @@ impl Version {
     }
 
     /// Fixed-field order for the entry document root.
-    pub fn root_order(self) -> &'static [&'static str] {
+    #[must_use]
+    pub const fn root_order(self) -> &'static [&'static str] {
         match self {
             Self::Oas30 => ROOT_30,
             Self::Oas31 => ROOT_31,
@@ -375,8 +455,9 @@ impl Version {
         }
     }
 
-    /// Fixed-field order for an Operation Object.
-    pub fn operation_order(self) -> &'static [&'static str] {
+    /// Fixed-field order for an `Operation` Object.
+    #[must_use]
+    pub const fn operation_order(self) -> &'static [&'static str] {
         OPERATION
     }
 
@@ -404,6 +485,7 @@ impl Version {
     }
 
     /// Classify a child from its parent expectation and the kind of syntax edge.
+    #[must_use]
     pub fn transition(self, parent: SemanticKind, edge: Edge<'_>) -> Option<SemanticKind> {
         match (parent, edge) {
             (S::Object(object) | S::ObjectOrReference(object), Edge::FixedField(field)) => {
@@ -437,7 +519,6 @@ impl Version {
     fn map_value(self, map: MapKind) -> Option<SemanticKind> {
         let child = match map {
             M::Webhooks | M::ComponentPathItems if self != Self::Oas30 => S::Object(O::PathItem),
-            M::Webhooks | M::ComponentPathItems => return None,
             M::ServerVariables => S::Object(O::ServerVariable),
             M::ComponentSchemas
             | M::SchemaProperties
@@ -461,13 +542,16 @@ impl Version {
             M::ComponentSecuritySchemes => S::ObjectOrReference(O::SecurityScheme),
             M::ComponentLinks | M::Links => S::ObjectOrReference(O::Link),
             M::ComponentCallbacks | M::Callbacks => S::ObjectOrReference(O::Callback),
-            M::ComponentMediaTypes if self == Self::Oas32 => S::ObjectOrReference(O::MediaType),
-            M::ComponentMediaTypes => return None,
-            M::Content if self == Self::Oas32 => S::ObjectOrReference(O::MediaType),
+            M::ComponentMediaTypes | M::Content if self == Self::Oas32 => {
+                S::ObjectOrReference(O::MediaType)
+            }
             M::Content => S::Object(O::MediaType),
             M::Encodings => S::Object(O::Encoding),
             M::AdditionalOperations if self == Self::Oas32 => S::Object(O::Operation),
-            M::AdditionalOperations => return None,
+            M::Webhooks
+            | M::ComponentPathItems
+            | M::ComponentMediaTypes
+            | M::AdditionalOperations => return None,
         };
         Some(child)
     }
@@ -768,8 +852,9 @@ mod tests {
                     SemanticKind::Object(object),
                     Edge::DynamicMapValue(key)
                 ),
-                Some(SemanticKind::Object(actual))
-                    | Some(SemanticKind::ObjectOrReference(actual))
+                Some(
+                    SemanticKind::Object(actual) | SemanticKind::ObjectOrReference(actual)
+                )
                     if actual == expected
             ));
         }

@@ -1,4 +1,13 @@
+//! Executable preservation matrix for lossless syntax movement and inspection.
+#![expect(
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unwrap_used,
+    reason = "test setup and assertions intentionally fail fast on broken fixtures"
+)]
+
 use std::collections::HashSet;
+use std::fmt::Write as _;
 use std::str::FromStr;
 
 use oafmt_syntax::{
@@ -288,9 +297,8 @@ fn executable_rejection_matrix() {
     ];
 
     for case in cases {
-        let error = match move_root_mapping_entry(case.input, case.key, case.to) {
-            Ok(_) => panic!("{} unexpectedly succeeded", case.name),
-            Err(error) => error,
+        let Err(error) = move_root_mapping_entry(case.input, case.key, case.to) else {
+            panic!("{} unexpectedly succeeded", case.name);
         };
         assert!((case.expected)(&error), "{}: {error:?}", case.name);
         assert_eq!(case.preservation, Preservation::Rejected);
@@ -311,9 +319,11 @@ fn resource_risks_are_bounded_before_or_during_parsing() {
         Err(MoveError::LineTooLong)
     );
 
-    let too_many_entries = (0..=MAX_MAPPING_ENTRIES)
-        .map(|index| format!("key{index}: value\n"))
-        .collect::<String>();
+    let mut too_many_entries = String::new();
+    for index in 0..=MAX_MAPPING_ENTRIES {
+        writeln!(&mut too_many_entries, "key{index}: value")
+            .expect("writing to a String cannot fail");
+    }
     assert_eq!(
         move_root_mapping_entry(&too_many_entries, "key0", 0),
         Err(MoveError::EntryCount(MAX_MAPPING_ENTRIES + 1))

@@ -1,5 +1,14 @@
+//! Command-line boundary for deterministic, syntax-preserving OpenAPI formatting.
+//!
+//! The CLI owns argument parsing, discovery, diagnostics, preflight, and
+//! permission-preserving atomic replacement. Write mode preflights the complete
+//! selection before mutating any file, then replaces each changed file
+//! independently. Failures are reported in deterministic path order and use the
+//! aggregate exit lattice `3 > 2 > 1 > 0`.
+
 use std::env;
 use std::ffi::OsString;
+use std::fmt;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
@@ -7,8 +16,10 @@ use std::process::ExitCode;
 
 use oafmt_core::{FormatError, InputFormat, format};
 
-mod config;
-mod discovery;
+/// Strict discovery configuration loading.
+pub mod config;
+/// Deterministic file discovery and selector resolution.
+pub mod discovery;
 
 use discovery::{FileInput, normalize_lexically};
 
@@ -55,7 +66,7 @@ fn main() -> ExitCode {
     match run() {
         Ok(code) => ExitCode::from(code),
         Err((code, message)) => {
-            eprintln!("oafmt: {message}");
+            diagnostic(message);
             ExitCode::from(code)
         }
     }
@@ -79,7 +90,10 @@ fn run() -> Result<u8, (u8, String)> {
                     Ok(0)
                 }
                 Mode::Check if result.changed => {
-                    eprintln!("oafmt: formatting changes required: {}", path.display());
+                    diagnostic(format_args!(
+                        "formatting changes required: {}",
+                        path.display()
+                    ));
                     Ok(1)
                 }
                 Mode::Check => Ok(0),
@@ -93,9 +107,10 @@ fn run() -> Result<u8, (u8, String)> {
                     }
                     Ok(0)
                 }
-                Mode::Write => {
-                    unreachable!("--write with stdin is rejected during argument parsing")
-                }
+                Mode::Write => Err((
+                    3,
+                    "internal invariant: write mode received stdin".to_owned(),
+                )),
             }
         }
         Input::Files {
@@ -114,13 +129,12 @@ fn run_files(
         .into_iter()
         .map(|file| {
             let key = file.key.clone();
-            (key, preflight_file(mode, file))
+            (key, preflight_file(mode, &file))
         })
         .collect();
     keyed_preflight.extend(discovery_failures.into_iter().map(|failure| {
-        let key = failure.key.clone();
         (
-            key.clone(),
+            failure.key,
             Preflight::Failed(Failure {
                 severity: 2,
                 message: failure.message,
@@ -134,11 +148,12 @@ fn run_files(
         .collect();
 
     match mode {
-        Mode::Stdout => match preflight
-            .into_iter()
-            .next()
-            .expect("argument parsing requires one input")
-        {
+        Mode::Stdout => match preflight.into_iter().next().ok_or_else(|| {
+            (
+                3,
+                "internal invariant: stdout mode has no preflight result".to_owned(),
+            )
+        })? {
             Preflight::Ready(file) => {
                 io::stdout()
                     .write_all(file.output.as_bytes())
@@ -153,7 +168,7 @@ fn run_files(
     }
 }
 
-fn preflight_file(mode: Mode, input: FileInput) -> Preflight {
+fn preflight_file(mode: Mode, input: &FileInput) -> Preflight {
     match prepare_file(mode, &input.path, &input.display) {
         Ok(file) => Preflight::Ready(file),
         Err((severity, message)) => Preflight::Failed(Failure { severity, message }),
@@ -201,15 +216,15 @@ fn run_check(preflight: Vec<Preflight>) -> u8 {
     for result in preflight {
         match result {
             Preflight::Ready(file) if file.changed => {
-                eprintln!(
-                    "oafmt: formatting changes required: {}",
+                diagnostic(format_args!(
+                    "formatting changes required: {}",
                     file.display.display()
-                );
+                ));
                 severities.push(1);
             }
             Preflight::Ready(_) => severities.push(0),
             Preflight::Failed(failure) => {
-                eprintln!("oafmt: {}", failure.message);
+                diagnostic(failure.message);
                 severities.push(failure.severity);
             }
         }
@@ -233,7 +248,7 @@ fn run_diff(preflight: Vec<Preflight>) -> Result<u8, (u8, String)> {
                 severities.push(0);
             }
             Preflight::Failed(failure) => {
-                eprintln!("oafmt: {}", failure.message);
+                diagnostic(failure.message);
                 severities.push(failure.severity);
             }
         }
@@ -250,7 +265,7 @@ fn run_write(preflight: Vec<Preflight>) -> Result<u8, (u8, String)> {
     if preflight_exit != 0 {
         for result in preflight {
             if let Preflight::Failed(failure) = result {
-                eprintln!("oafmt: {}", failure.message);
+                diagnostic(failure.message);
             }
         }
         return Ok(preflight_exit);
@@ -259,13 +274,19 @@ fn run_write(preflight: Vec<Preflight>) -> Result<u8, (u8, String)> {
     let mut severities = Vec::with_capacity(preflight.len());
     for result in preflight {
         let Preflight::Ready(file) = result else {
-            unreachable!("preflight failures returned before replacement");
+            return Err((
+                3,
+                "internal invariant: failed preflight reached replacement".to_owned(),
+            ));
         };
         if file.changed {
             match atomic_replace(&file.path, file.output.as_bytes()) {
                 Ok(()) => severities.push(0),
                 Err(error) => {
-                    eprintln!("oafmt: cannot replace {}: {error}", file.display.display());
+                    diagnostic(format_args!(
+                        "cannot replace {}: {error}",
+                        file.display.display()
+                    ));
                     severities.push(2);
                 }
             }
@@ -277,7 +298,7 @@ fn run_write(preflight: Vec<Preflight>) -> Result<u8, (u8, String)> {
 }
 
 fn parse_args(args: impl Iterator<Item = OsString>) -> Result<Options, (u8, String)> {
-    let mut args = args.peekable();
+    let mut args = args;
     let mut mode = None;
     let mut stdin_path = None;
     let mut config_path = None;
@@ -348,7 +369,8 @@ fn parse_args(args: impl Iterator<Item = OsString>) -> Result<Options, (u8, Stri
     } else {
         let cwd = env::current_dir().ok();
         let config = config::load(config_path.as_deref(), cwd.as_deref()).map_err(user_error)?;
-        let resolution = discovery::resolve(files, mode, cwd.as_deref(), &config);
+        let resolution = discovery::resolve(files, mode, cwd.as_deref(), &config)
+            .map_err(|message| (3, message))?;
         Input::Files {
             files: resolution.files,
             discovery_failures: resolution.failures,
@@ -369,14 +391,9 @@ fn sort_and_deduplicate(paths: Vec<PathBuf>) -> Result<Vec<FileInput>, (u8, Stri
     let mut files = paths
         .into_iter()
         .map(|path| {
-            let absolute = if path.is_absolute() {
-                path.clone()
-            } else {
-                current_directory
-                    .as_ref()
-                    .expect("relative inputs require a current directory")
-                    .join(&path)
-            };
+            let absolute = current_directory
+                .as_ref()
+                .map_or_else(|| path.clone(), |directory| directory.join(&path));
             FileInput {
                 key: normalize_lexically(&absolute),
                 path: path.clone(),
@@ -506,8 +523,17 @@ fn aggregate_exit(severities: impl IntoIterator<Item = u8>) -> u8 {
     severities.into_iter().max().unwrap_or(0)
 }
 
+fn diagnostic(message: impl fmt::Display) {
+    drop(writeln!(io::stderr().lock(), "oafmt: {message}"));
+}
+
 #[cfg(test)]
 mod tests {
+    #![expect(
+        clippy::unwrap_used,
+        reason = "the test asserts that a deliberately failing writer returns an error"
+    )]
+
     use std::io::{self, Write};
 
     use super::{aggregate_exit, write_diff_output};
