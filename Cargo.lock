@@ -195,7 +195,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "oafmt-cli"
+name = "oafmt"
 version = "0.1.0"
 dependencies = [
  "ignore",

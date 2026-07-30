@@ -20,6 +20,35 @@ oafmt --check --config path/to/oafmt.toml DIRECTORY...
 oafmt --stdin-filepath virtual.yaml < input.yaml
 ```
 
+## Installation
+
+Install the published crate from crates.io:
+
+```sh
+cargo install oafmt
+```
+
+Or install the prebuilt release through Homebrew:
+
+```sh
+brew install kokjinsam/tap/oafmt
+```
+
+GitHub releases provide `.tar.xz` archives for macOS and Linux on x86-64 and
+Arm64, with one `.sha256` file per archive. For example, replace `TARGET` with
+one of `aarch64-apple-darwin`, `x86_64-apple-darwin`,
+`aarch64-unknown-linux-gnu`, or `x86_64-unknown-linux-gnu`:
+
+```sh
+curl -LO "https://github.com/kokjinsam/oafmt/releases/download/v0.1.0/oafmt-TARGET.tar.xz"
+curl -LO "https://github.com/kokjinsam/oafmt/releases/download/v0.1.0/oafmt-TARGET.tar.xz.sha256"
+sha256sum --check "oafmt-TARGET.tar.xz.sha256"
+tar -xJf "oafmt-TARGET.tar.xz"
+./oafmt-TARGET/oafmt openapi.yaml
+```
+
+On macOS, use `shasum -a 256 -c` in place of `sha256sum --check`.
+
 Plain stdout mode and `--stdin-filepath` accept one document. Stdin cannot be
 combined with file arguments, and `--write` does not accept stdin. Write,
 check, and diff modes accept one or more literal files, recursive directory
@@ -86,16 +115,22 @@ parallel.
 The local and CI gates are:
 
 ```sh
+ASDF_RUST_VERSION=1.85.0 RUSTUP_TOOLCHAIN=1.85.0 cargo check --locked --workspace --all-features
 cargo fmt --all -- --check
 cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 cargo test --locked --workspace --all-features
 cargo build --locked --workspace --all-features
 RUSTDOCFLAGS="-D warnings" cargo doc --locked --workspace --all-features --no-deps
 cargo deny --locked check
+dist generate --check
+dist plan
+git diff --check
 ```
 
 Maximum-policy linting uses Rust and Clippy 1.97.1. The declared MSRV remains
-Rust 1.85 and is checked separately in CI.
+Rust 1.85 and is checked separately in CI. Release prerequisites, crates.io
+ordering, recovery, and post-release checks are documented in
+[`RELEASING.md`](RELEASING.md).
 
 ## License
 

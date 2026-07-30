@@ -13,6 +13,8 @@ edition = "2024"
 rust-version = "1.85"
 license = "MIT"
 repository = "https://github.com/kokjinsam/oafmt"
+homepage = "https://github.com/kokjinsam/oafmt"
+publish = ["crates-io"]
 readme = "README.md"
 keywords = ["openapi", "formatter", "yaml", "json"]
 categories = ["command-line-utilities", "development-tools"]
@@ -60,3 +62,8 @@ cast_sign_loss = "allow"
 cast_precision_loss = "allow"
 cast_possible_wrap = "allow"
 cognitive_complexity = "allow"
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"
