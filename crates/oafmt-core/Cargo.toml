@@ -16,5 +16,10 @@ description = "Pure orchestration for deterministic, syntax-preserving OpenAPI f
 oafmt-oas = { path = "../oafmt-oas", version = "0.1.0" }
 oafmt-syntax = { path = "../oafmt-syntax", version = "0.1.0" }
 
+[dev-dependencies]
+serde = { version = "1", features = ["derive"] }
+sha2 = "0.10.9"
+toml = "0.8.23"
+
 [lints]
 workspace = true

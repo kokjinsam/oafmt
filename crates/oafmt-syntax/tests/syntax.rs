@@ -157,6 +157,36 @@ fn semantic_validation_accepts_reordering_and_rejects_value_changes() {
 }
 
 #[test]
+fn json_semantic_validation_compares_numbers_exactly() {
+    for (name, before, after) in [
+        (
+            "long fractional values",
+            r#"{"value":0.1234567890123456789012345678901}"#,
+            r#"{"value":0.1234567890123456789012345678902}"#,
+        ),
+        (
+            "30-plus-digit integers",
+            r#"{"value":1234567890123456789012345678901234567890}"#,
+            r#"{"value":1234567890123456789012345678901234567891}"#,
+        ),
+        (
+            "underflowing exponents",
+            r#"{"value":1e-400}"#,
+            r#"{"value":2e-400}"#,
+        ),
+    ] {
+        assert!(
+            matches!(
+                validate_semantic_preservation(before, after, InputFormat::Json),
+                Err(SyntaxError::InternalInvariant(message))
+                    if message == "JSON semantics changed during formatting"
+            ),
+            "{name}"
+        );
+    }
+}
+
+#[test]
 fn byte_range_ordering_is_stable() {
     let mut ranges = [
         ByteRange { start: 8, end: 10 },

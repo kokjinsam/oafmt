@@ -96,6 +96,39 @@ fn successful_fixtures_are_exact_deterministic_idempotent_and_lossless() {
 }
 
 #[test]
+fn json_number_lexemes_survive_root_and_operation_movement_exactly() {
+    let input = r#"{"paths":{"/numbers":{"get":{"responses":{},"x-beyond-u64":18446744073709551616,"x-below-i64":-9223372036854775809,"x-fraction":0.1234567890123456789012345678901,"x-positive-exponent":1e400,"x-negative-exponent":1e-400,"x-adjacent-a":1234567890123456789012345678901234567890,"x-adjacent-b":1234567890123456789012345678901234567891,"x-numeric-string":"18446744073709551616","summary":"numbers"}}},"x-root-number":9999999999999999999999999999999999999999,"x-root-string":"1e400","openapi":"3.1.0","info":{"title":"Numbers","version":"1"}}"#;
+    let expected = r#"{"openapi":"3.1.0","x-root-number":9999999999999999999999999999999999999999,"x-root-string":"1e400","info":{"title":"Numbers","version":"1"},"paths":{"/numbers":{"get":{"summary":"numbers","x-beyond-u64":18446744073709551616,"x-below-i64":-9223372036854775809,"x-fraction":0.1234567890123456789012345678901,"x-positive-exponent":1e400,"x-negative-exponent":1e-400,"x-adjacent-a":1234567890123456789012345678901234567890,"x-adjacent-b":1234567890123456789012345678901234567891,"x-numeric-string":"18446744073709551616","responses":{}}}}}"#;
+
+    let first = format(input, InputFormat::Json).expect("exact-number fixture should format");
+    let repeat = format(input, InputFormat::Json).expect("repeat formatting should succeed");
+    let second =
+        format(&first.output, InputFormat::Json).expect("second formatting pass should succeed");
+
+    assert_eq!(first.output, expected);
+    assert!(first.changed);
+    assert_eq!(repeat, first);
+    assert_eq!(second.output, expected);
+    assert!(!second.changed);
+    for lexeme in [
+        "18446744073709551616",
+        "-9223372036854775809",
+        "0.1234567890123456789012345678901",
+        "1e400",
+        "1e-400",
+        "1234567890123456789012345678901234567890",
+        "1234567890123456789012345678901234567891",
+        "\"18446744073709551616\"",
+        "\"1e400\"",
+    ] {
+        assert!(
+            first.output.contains(lexeme),
+            "missing exact lexeme {lexeme}"
+        );
+    }
+}
+
+#[test]
 fn malformed_input_is_rejected_without_output() {
     assert!(matches!(
         format("openapi: [\n", InputFormat::Yaml),

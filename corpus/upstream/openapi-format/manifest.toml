@@ -1,0 +1,500 @@
+[upstream]
+repository = "https://github.com/thim81/openapi-format"
+commit = "bee0bebc84221c5cf25574dd6af74c135d7efe05"
+license = "MIT"
+
+[[cases]]
+id = "yaml-default"
+origin = "thim81/openapi-format@bee0bebc84221c5cf25574dd6af74c135d7efe05"
+classification = "intentional-difference"
+executable = true
+format = "yaml"
+upstream_paths = ["test/yaml-default/input.yaml", "test/yaml-default/options.yaml"]
+copied_input = "cases/yaml-default/input.yaml"
+input_sha256 = "7f1588083a5987e91dff71786beddc5470abd8e22bf9041d15ebb4c07d968c84"
+expected_path = "cases/yaml-default/expected.oafmt.yaml"
+expected_owner = "oafmt"
+upstream_output_paths = ["test/yaml-default/output.yaml"]
+upstream_output_is_oracle = false
+coverage = "Default YAML input through the fixed root and direct Operation ordering boundary."
+notes = "Upstream formats additional object locations and scalar presentation that oafmt intentionally preserves."
+
+[[cases]]
+id = "json-default"
+origin = "thim81/openapi-format@bee0bebc84221c5cf25574dd6af74c135d7efe05"
+classification = "intentional-difference"
+executable = true
+format = "json"
+upstream_paths = ["test/json-default/input.json", "test/json-default/options.yaml"]
+copied_input = "cases/json-default/input.json"
+input_sha256 = "caf20170f0520ddbba6890163b491524e4fc12dedb57710659d873070f27862f"
+expected_path = "cases/json-default/expected.oafmt.json"
+expected_owner = "oafmt"
+upstream_output_paths = ["test/json-default/output.json"]
+upstream_output_is_oracle = false
+coverage = "Default JSON input through the fixed root and direct Operation ordering boundary."
+notes = "Upstream normalizes JSON layout and sorts additional locations; oafmt preserves both."
+
+[[cases]]
+id = "yaml-sort-keep-comments"
+origin = "thim81/openapi-format@bee0bebc84221c5cf25574dd6af74c135d7efe05"
+classification = "intentional-difference"
+executable = true
+format = "yaml"
+upstream_paths = ["test/yaml-sort-keep-comments/input.yaml", "test/yaml-sort-keep-comments/options.yaml", "test/yaml-sort-keep-comments/customFilter.yaml"]
+copied_input = "cases/yaml-sort-keep-comments/input.yaml"
+input_sha256 = "e08a6c9cb0070b568db37ed384525d7e239653241f206f34322e450ba734fe0c"
+expected_path = "cases/yaml-sort-keep-comments/expected.oafmt.yaml"
+expected_owner = "oafmt"
+upstream_output_paths = ["test/yaml-sort-keep-comments/output.yaml"]
+upstream_output_is_oracle = false
+coverage = "Comment-preserving YAML movement at supported ordering locations."
+notes = "Upstream custom sorting is outside oafmt; comments and unsupported locations remain byte-preserved."
+
+[[cases]]
+id = "yaml-sort-query"
+origin = "thim81/openapi-format@bee0bebc84221c5cf25574dd6af74c135d7efe05"
+classification = "intentional-difference"
+executable = true
+format = "yaml"
+upstream_paths = ["test/yaml-sort-query/input.yaml", "test/yaml-sort-query/options.yaml"]
+copied_input = "cases/yaml-sort-query/input.yaml"
+input_sha256 = "19d07e772f04cd86a00262bff5d57831139fe3982164ecbe7ff627238c163658"
+expected_path = "cases/yaml-sort-query/expected.oafmt.yaml"
+expected_owner = "oafmt"
+upstream_output_paths = ["test/yaml-sort-query/output.yaml"]
+upstream_output_is_oracle = false
+coverage = "OpenAPI 3.2 query Operation ordering."
+notes = "Only the entry-document query Operation is in oafmt's formatting boundary."
+
+[[cases]]
+id = "yaml-default-bug-big-numbers"
+origin = "thim81/openapi-format@bee0bebc84221c5cf25574dd6af74c135d7efe05"
+classification = "compatible"
+executable = true
+format = "yaml"
+upstream_paths = ["test/yaml-default-bug-big-numbers/input.yaml", "test/yaml-default-bug-big-numbers/options.yaml"]
+copied_input = "cases/yaml-default-bug-big-numbers/input.yaml"
+input_sha256 = "fafabb9cf19b6a7d666aa89be965e96d4a9512a01fe4e27ea4698a8a11a2e054"
+expected_path = "cases/yaml-default-bug-big-numbers/expected.oafmt.yaml"
+expected_owner = "oafmt"
+upstream_output_paths = ["test/yaml-default-bug-big-numbers/output.yaml"]
+upstream_output_is_oracle = false
+coverage = "Large YAML number lexeme preservation."
+notes = "The input already satisfies oafmt ordering and remains byte-identical."
+
+[[cases]]
+id = "json-default-bug-big-numbers"
+origin = "thim81/openapi-format@bee0bebc84221c5cf25574dd6af74c135d7efe05"
+classification = "compatible"
+executable = true
+format = "json"
+upstream_paths = ["test/json-default-bug-big-numbers/input.json", "test/json-default-bug-big-numbers/options.yaml"]
+copied_input = "cases/json-default-bug-big-numbers/input.json"
+input_sha256 = "754a411282785918d6fd62777e6d9d2d18316a021e8f38cc4b72df4f66e8f316"
+expected_path = "cases/json-default-bug-big-numbers/expected.oafmt.json"
+expected_owner = "oafmt"
+upstream_output_paths = ["test/json-default-bug-big-numbers/output.json"]
+upstream_output_is_oracle = false
+coverage = "Arbitrary-precision JSON number acceptance and lexeme preservation."
+notes = "The input already satisfies oafmt ordering and remains byte-identical."
+
+[[cases]]
+id = "yaml-default-bug-numbers-x-tag"
+origin = "thim81/openapi-format@bee0bebc84221c5cf25574dd6af74c135d7efe05"
+classification = "intentional-difference"
+executable = true
+format = "yaml"
+upstream_paths = ["test/yaml-default-bug-numbers-x-tag/input.yaml", "test/yaml-default-bug-numbers-x-tag/options.yaml"]
+copied_input = "cases/yaml-default-bug-numbers-x-tag/input.yaml"
+input_sha256 = "b26082082e2dafcd5450073fb2eacc606b0bf9ca8d49a0a7120433dc1227a648"
+expected_path = "cases/yaml-default-bug-numbers-x-tag/expected.oafmt.yaml"
+expected_owner = "oafmt"
+upstream_output_paths = ["test/yaml-default-bug-numbers-x-tag/output.yaml"]
+upstream_output_is_oracle = false
+coverage = "Numeric extension values moving with supported mapping entries."
+notes = "oafmt preserves scalar lexemes and does not apply upstream normalization."
+
+[[cases]]
+id = "yaml-preserve-example-props"
+origin = "thim81/openapi-format@bee0bebc84221c5cf25574dd6af74c135d7efe05"
+classification = "intentional-difference"
+executable = true
+format = "yaml"
+upstream_paths = ["test/yaml-preserve-example-props/input.yaml", "test/yaml-preserve-example-props/options.yaml"]
+copied_input = "cases/yaml-preserve-example-props/input.yaml"
+input_sha256 = "6ea270058cfe7c24eb21e3f960a81d400c9cca93b0821b4d78960d24c49df931"
+expected_path = "cases/yaml-preserve-example-props/expected.oafmt.yaml"
+expected_owner = "oafmt"
+upstream_output_paths = ["test/yaml-preserve-example-props/output.yaml"]
+upstream_output_is_oracle = false
+coverage = "Example payloads remain opaque and byte-preserved."
+notes = "Upstream example-property sorting is outside oafmt's boundary."
+
+[[cases]]
+id = "json-example-schemas"
+origin = "thim81/openapi-format@bee0bebc84221c5cf25574dd6af74c135d7efe05"
+classification = "intentional-difference"
+executable = true
+format = "json"
+upstream_paths = ["test/json-example-schemas/input.json", "test/json-example-schemas/options.yaml"]
+copied_input = "cases/json-example-schemas/input.json"
+input_sha256 = "7d814c45415dfb2af05aee1d1beba1cc872825fb208c43ee0226727c552f83ba"
+expected_path = "cases/json-example-schemas/expected.oafmt.json"
+expected_owner = "oafmt"
+upstream_output_paths = ["test/json-example-schemas/output.json"]
+upstream_output_is_oracle = false
+coverage = "JSON example and schema values remain opaque."
+notes = "Schema and example sorting are intentionally outside oafmt."
+
+[[cases]]
+id = "yaml-default-bug-examples-properties"
+origin = "thim81/openapi-format@bee0bebc84221c5cf25574dd6af74c135d7efe05"
+classification = "intentional-difference"
+executable = true
+format = "yaml"
+upstream_paths = ["test/yaml-default-bug-examples-properties/input.yaml", "test/yaml-default-bug-examples-properties/options.yaml"]
+copied_input = "cases/yaml-default-bug-examples-properties/input.yaml"
+input_sha256 = "d42d1e7676d8874fe4f51e6a14922260eaff4497b5fb0f864c0cc9fa97658d6f"
+expected_path = "cases/yaml-default-bug-examples-properties/expected.oafmt.yaml"
+expected_owner = "oafmt"
+upstream_output_paths = ["test/yaml-default-bug-examples-properties/output.yaml"]
+upstream_output_is_oracle = false
+coverage = "Supported ordering with nested example properties kept opaque."
+notes = "oafmt moves only root and direct Operation entries."
+
+[[cases]]
+id = "yaml-default-bug-nested-properties"
+origin = "thim81/openapi-format@bee0bebc84221c5cf25574dd6af74c135d7efe05"
+classification = "intentional-difference"
+executable = true
+format = "yaml"
+upstream_paths = ["test/yaml-default-bug-nested-properties/input.yaml", "test/yaml-default-bug-nested-properties/options.yaml"]
+copied_input = "cases/yaml-default-bug-nested-properties/input.yaml"
+input_sha256 = "9bf6738b5f0103b60191d4a320f0c1e6513b0a7885dd99358b857ea318e284b7"
+expected_path = "cases/yaml-default-bug-nested-properties/expected.oafmt.yaml"
+expected_owner = "oafmt"
+upstream_output_paths = ["test/yaml-default-bug-nested-properties/output.yaml"]
+upstream_output_is_oracle = false
+coverage = "Supported ordering with nested schema properties kept opaque."
+notes = "Nested property ordering is intentionally outside oafmt."
+
+[[cases]]
+id = "json-example-request"
+origin = "thim81/openapi-format@bee0bebc84221c5cf25574dd6af74c135d7efe05"
+classification = "intentional-difference"
+executable = true
+format = "json"
+upstream_paths = ["test/json-example-request/input.json", "test/json-example-request/options.yaml"]
+copied_input = "cases/json-example-request/input.json"
+input_sha256 = "aceea03d409d32d8925b7c5853545a7ece8a68c1dfd3a314d3380cc79115be43"
+expected_path = "cases/json-example-request/expected.oafmt.json"
+expected_owner = "oafmt"
+upstream_output_paths = ["test/json-example-request/output.json"]
+upstream_output_is_oracle = false
+coverage = "Request example data remains opaque."
+notes = "Example-object formatting is intentionally outside oafmt."
+
+[[cases]]
+id = "yaml-big-numbers"
+origin = "thim81/openapi-format@bee0bebc84221c5cf25574dd6af74c135d7efe05"
+classification = "compatible"
+executable = true
+format = "yaml"
+upstream_paths = ["test/yaml-big-numbers/input.yaml", "test/yaml-big-numbers/options.yaml"]
+copied_input = "cases/yaml-big-numbers/input.yaml"
+input_sha256 = "ff94c09a3ca89d2ae56f1b239d8b1d5ef156fb5067eed0f0b121e80d67314287"
+expected_path = "cases/yaml-big-numbers/expected.oafmt.yaml"
+expected_owner = "oafmt"
+upstream_output_paths = ["test/yaml-big-numbers/output.yaml"]
+upstream_output_is_oracle = false
+coverage = "Large YAML integers and fractions remain exact."
+notes = "The input already satisfies oafmt ordering and remains byte-identical."
+
+[[cases]]
+id = "json-no-sort"
+origin = "thim81/openapi-format@bee0bebc84221c5cf25574dd6af74c135d7efe05"
+classification = "intentional-difference"
+executable = true
+format = "json"
+upstream_paths = ["test/json-no-sort/input.json", "test/json-no-sort/options.yaml"]
+copied_input = "cases/json-no-sort/input.json"
+input_sha256 = "7e138f306d90f998e3a5199d0faa892ef92890591ec904eaabe6a2b480678aa9"
+expected_path = "cases/json-no-sort/expected.oafmt.json"
+expected_owner = "oafmt"
+upstream_output_paths = ["test/json-no-sort/output.json"]
+upstream_output_is_oracle = false
+coverage = "oafmt's fixed production ordering is independent of upstream no-sort options."
+notes = "Upstream configurable sorting policy is not an oafmt oracle."
+
+[[cases]]
+id = "yaml-default-bug-x-version-decimal"
+origin = "thim81/openapi-format@bee0bebc84221c5cf25574dd6af74c135d7efe05"
+classification = "compatible"
+executable = true
+format = "yaml"
+upstream_paths = ["test/yaml-default-bug-x-version-decimal/input.yaml", "test/yaml-default-bug-x-version-decimal/options.yaml"]
+copied_input = "cases/yaml-default-bug-x-version-decimal/input.yaml"
+input_sha256 = "7cb54e60f9a1ef618319673e44d4a73d2865f1abbb2792481eb0f1ae54941347"
+expected_path = "cases/yaml-default-bug-x-version-decimal/expected.oafmt.yaml"
+expected_owner = "oafmt"
+upstream_output_paths = ["test/yaml-default-bug-x-version-decimal/output.yaml"]
+upstream_output_is_oracle = false
+coverage = "Decimal extension version lexeme preservation."
+notes = "The input already satisfies oafmt ordering and remains byte-identical."
+
+[[cases]]
+id = "yaml-default-newline"
+origin = "thim81/openapi-format@bee0bebc84221c5cf25574dd6af74c135d7efe05"
+classification = "intentional-difference"
+executable = false
+format = "yaml"
+upstream_paths = ["test/yaml-default-newline/input.yaml", "test/yaml-default-newline/options.yaml"]
+copied_input = "cases/yaml-default-newline/input.yaml"
+input_sha256 = "6d37ca6b0c7d11c843f61a202fd4bd68e34034953cf266a0aa7bebadd5da71dd"
+upstream_output_paths = ["test/yaml-default-newline/output.yaml"]
+upstream_output_is_oracle = false
+coverage = "Reference for upstream final-newline behavior."
+notes = "Copied for provenance only; oafmt preserves final-newline state."
+
+[[cases]]
+id = "yaml-quote-style-detect"
+origin = "thim81/openapi-format@bee0bebc84221c5cf25574dd6af74c135d7efe05"
+classification = "out-of-scope"
+executable = false
+format = "yaml"
+upstream_paths = ["test/yaml-quote-style-detect/input.yaml", "test/yaml-quote-style-detect/options.yaml"]
+upstream_output_paths = ["test/yaml-quote-style-detect/output.yaml"]
+upstream_output_is_oracle = false
+coverage = "Quote-style detection."
+notes = "Scalar quote normalization is outside oafmt."
+
+[[cases]]
+id = "yaml-path-ref-quotes"
+origin = "thim81/openapi-format@bee0bebc84221c5cf25574dd6af74c135d7efe05"
+classification = "intentional-difference"
+executable = false
+format = "yaml"
+upstream_paths = ["test/yaml-path-ref-quotes/input.yaml", "test/yaml-path-ref-quotes/options.yaml"]
+copied_input = "cases/yaml-path-ref-quotes/input.yaml"
+input_sha256 = "9efdaaef67166c43d9800ec45db23d793d849f45321d88585a70e9c398cb36e7"
+upstream_output_paths = ["test/yaml-path-ref-quotes/output.yaml"]
+upstream_output_is_oracle = false
+coverage = "Reference for quoted path and reference scalars."
+notes = "Copied for provenance only; oafmt does not normalize scalar quoting."
+
+[[cases]]
+id = "yaml-no-sort-keep-comments"
+origin = "thim81/openapi-format@bee0bebc84221c5cf25574dd6af74c135d7efe05"
+classification = "out-of-scope"
+executable = false
+format = "yaml"
+upstream_paths = ["test/yaml-no-sort-keep-comments/input.yaml", "test/yaml-no-sort-keep-comments/options.yaml", "test/yaml-no-sort-keep-comments/customFilter.yaml"]
+upstream_output_paths = ["test/yaml-no-sort-keep-comments/output.yaml"]
+upstream_output_is_oracle = false
+coverage = "Configurable no-sort and filtering behavior."
+notes = "User-configurable sort and filter policy is outside oafmt."
+
+[[cases]]
+id = "yaml-sort-components"
+origin = "thim81/openapi-format@bee0bebc84221c5cf25574dd6af74c135d7efe05"
+classification = "out-of-scope"
+executable = false
+format = "yaml"
+upstream_paths = ["test/yaml-sort-components/input.yaml", "test/yaml-sort-components/options.yaml", "test/yaml-sort-components/customSortComponents.yaml"]
+upstream_output_paths = ["test/yaml-sort-components/output.yaml"]
+upstream_output_is_oracle = false
+coverage = "Component ordering."
+notes = "Components are outside oafmt's formatting boundary."
+
+[[cases]]
+id = "json-sort-components"
+origin = "thim81/openapi-format@bee0bebc84221c5cf25574dd6af74c135d7efe05"
+classification = "out-of-scope"
+executable = false
+format = "json"
+upstream_paths = ["test/json-sort-components/input.json", "test/json-sort-components/options.yaml", "test/json-sort-components/customSortComponents.json"]
+upstream_output_paths = ["test/json-sort-components/output.json"]
+upstream_output_is_oracle = false
+coverage = "JSON component ordering."
+notes = "Components are outside oafmt's formatting boundary."
+
+[[cases]]
+id = "yaml-sort-component-props"
+origin = "thim81/openapi-format@bee0bebc84221c5cf25574dd6af74c135d7efe05"
+classification = "out-of-scope"
+executable = false
+format = "yaml"
+upstream_paths = ["test/yaml-sort-component-props/input.yaml", "test/yaml-sort-component-props/options.yaml", "test/yaml-sort-component-props/customSortComponents.yaml"]
+upstream_output_paths = ["test/yaml-sort-component-props/output.yaml"]
+upstream_output_is_oracle = false
+coverage = "Component property ordering."
+notes = "Components and schema properties are outside oafmt."
+
+[[cases]]
+id = "json-sort-request-params"
+origin = "thim81/openapi-format@bee0bebc84221c5cf25574dd6af74c135d7efe05"
+classification = "out-of-scope"
+executable = false
+format = "json"
+upstream_paths = ["test/json-sort-request-params/input.json", "test/json-sort-request-params/options.yaml", "test/json-sort-request-params/customSortComponents.yaml"]
+upstream_output_paths = ["test/json-sort-request-params/output.json"]
+upstream_output_is_oracle = false
+coverage = "Request-parameter ordering."
+notes = "Parameter arrays are outside oafmt's formatting boundary."
+
+[[cases]]
+id = "yaml-sort-paths-alphabet"
+origin = "thim81/openapi-format@bee0bebc84221c5cf25574dd6af74c135d7efe05"
+classification = "out-of-scope"
+executable = false
+format = "yaml"
+upstream_paths = ["test/yaml-sort-paths-alphabet/input.yaml", "test/yaml-sort-paths-alphabet/options.yaml", "test/yaml-sort-paths-alphabet/customSort.yaml"]
+upstream_output_paths = ["test/yaml-sort-paths-alphabet/output.yaml"]
+upstream_output_is_oracle = false
+coverage = "Alphabetic Path Item ordering."
+notes = "Dynamic path-key ordering is outside oafmt."
+
+[[cases]]
+id = "yaml-sort-paths-tags"
+origin = "thim81/openapi-format@bee0bebc84221c5cf25574dd6af74c135d7efe05"
+classification = "out-of-scope"
+executable = false
+format = "yaml"
+upstream_paths = ["test/yaml-sort-paths-tags/input.yaml", "test/yaml-sort-paths-tags/options.yaml", "test/yaml-sort-paths-tags/customSort.yaml"]
+upstream_output_paths = ["test/yaml-sort-paths-tags/output.yaml"]
+upstream_output_is_oracle = false
+coverage = "Tag-driven Path Item ordering."
+notes = "Dynamic path-key ordering is outside oafmt."
+
+[[cases]]
+id = "yaml-filter-query-methods"
+origin = "thim81/openapi-format@bee0bebc84221c5cf25574dd6af74c135d7efe05"
+classification = "out-of-scope"
+executable = false
+format = "yaml"
+upstream_paths = ["test/yaml-filter-query-methods/input.yaml", "test/yaml-filter-query-methods/options.yaml"]
+upstream_output_paths = ["test/yaml-filter-query-methods/output.yaml"]
+upstream_output_is_oracle = false
+coverage = "Operation filtering."
+notes = "Filtering and semantic deletion are outside oafmt."
+
+[[cases]]
+id = "yaml-filter-unused-components"
+origin = "thim81/openapi-format@bee0bebc84221c5cf25574dd6af74c135d7efe05"
+classification = "out-of-scope"
+executable = false
+format = "yaml"
+upstream_paths = ["test/yaml-filter-unused-components/input.yaml", "test/yaml-filter-unused-components/options.yaml", "test/yaml-filter-unused-components/customFilter.yaml"]
+upstream_output_paths = ["test/yaml-filter-unused-components/output.yaml"]
+upstream_output_is_oracle = false
+coverage = "Unused-component filtering."
+notes = "Reference analysis and semantic deletion are outside oafmt."
+
+[[cases]]
+id = "yaml-casing"
+origin = "thim81/openapi-format@bee0bebc84221c5cf25574dd6af74c135d7efe05"
+classification = "out-of-scope"
+executable = false
+format = "yaml"
+upstream_paths = ["test/yaml-casing/input.yaml", "test/yaml-casing/options.yaml", "test/yaml-casing/customCasing.yaml"]
+upstream_output_paths = ["test/yaml-casing/output.yaml"]
+upstream_output_is_oracle = false
+coverage = "Identifier casing conversion."
+notes = "Casing conversion is outside oafmt."
+
+[[cases]]
+id = "yaml-casing-properties"
+origin = "thim81/openapi-format@bee0bebc84221c5cf25574dd6af74c135d7efe05"
+classification = "out-of-scope"
+executable = false
+format = "yaml"
+upstream_paths = ["test/yaml-casing-properties/input.yaml", "test/yaml-casing-properties/options.yaml", "test/yaml-casing-properties/customCasing.yaml"]
+upstream_output_paths = ["test/yaml-casing-properties/output.yaml"]
+upstream_output_is_oracle = false
+coverage = "Schema-property casing conversion."
+notes = "Casing conversion and schema edits are outside oafmt."
+
+[[cases]]
+id = "yaml-rename"
+origin = "thim81/openapi-format@bee0bebc84221c5cf25574dd6af74c135d7efe05"
+classification = "out-of-scope"
+executable = false
+format = "yaml"
+upstream_paths = ["test/yaml-rename/input.yaml", "test/yaml-rename/options.yaml"]
+upstream_output_paths = ["test/yaml-rename/output.yaml"]
+upstream_output_is_oracle = false
+coverage = "YAML title and version renaming."
+notes = "Semantic renaming is outside oafmt."
+
+[[cases]]
+id = "json-rename"
+origin = "thim81/openapi-format@bee0bebc84221c5cf25574dd6af74c135d7efe05"
+classification = "out-of-scope"
+executable = false
+format = "json"
+upstream_paths = ["test/json-rename/input.json", "test/json-rename/options.yaml"]
+upstream_output_paths = ["test/json-rename/output.json"]
+upstream_output_is_oracle = false
+coverage = "JSON title and version renaming."
+notes = "Semantic renaming is outside oafmt."
+
+[[cases]]
+id = "yaml-convert-3.0-3.2"
+origin = "thim81/openapi-format@bee0bebc84221c5cf25574dd6af74c135d7efe05"
+classification = "out-of-scope"
+executable = false
+format = "yaml"
+upstream_paths = ["test/yaml-convert-3.0-3.2/input.yaml", "test/yaml-convert-3.0-3.2/options.yaml"]
+upstream_output_paths = ["test/yaml-convert-3.0-3.2/output.yaml", "test/yaml-convert-3.0-3.2/output_OpenApi32.yaml"]
+upstream_output_is_oracle = false
+coverage = "OpenAPI 3.0 to 3.2 conversion."
+notes = "Version conversion is outside oafmt."
+
+[[cases]]
+id = "json-convert-3.1"
+origin = "thim81/openapi-format@bee0bebc84221c5cf25574dd6af74c135d7efe05"
+classification = "out-of-scope"
+executable = false
+format = "json"
+upstream_paths = ["test/json-convert-3.1/input.json", "test/json-convert-3.1/options.yaml"]
+upstream_output_paths = ["test/json-convert-3.1/output.json"]
+upstream_output_is_oracle = false
+coverage = "OpenAPI JSON version conversion."
+notes = "Version conversion is outside oafmt."
+
+[[cases]]
+id = "overlay-combi"
+origin = "thim81/openapi-format@bee0bebc84221c5cf25574dd6af74c135d7efe05"
+classification = "out-of-scope"
+executable = false
+format = "yaml"
+upstream_paths = ["test/overlay-combi/input.yaml", "test/overlay-combi/options.yaml", "test/overlay-combi/overlay.yaml"]
+upstream_output_paths = ["test/overlay-combi/output.yaml"]
+upstream_output_is_oracle = false
+coverage = "Overlay application."
+notes = "Overlay processing is outside oafmt."
+
+[[cases]]
+id = "yaml-ref-quotes"
+origin = "thim81/openapi-format@bee0bebc84221c5cf25574dd6af74c135d7efe05"
+classification = "out-of-scope"
+executable = false
+format = "yaml"
+upstream_paths = ["test/yaml-ref-quotes/input.yaml", "test/yaml-ref-quotes/options.yaml", "test/yaml-ref-quotes/domain-types.openapi.yaml"]
+upstream_output_paths = ["test/yaml-ref-quotes/output.yaml", "test/yaml-ref-quotes/bundled.yaml"]
+upstream_output_is_oracle = false
+coverage = "Reference resolution and quote normalization."
+notes = "Reference resolution, bundling, and scalar normalization are outside oafmt."
+
+[[cases]]
+id = "_split/{snap.yaml,snap_station.yaml,snap_station_id.yaml}"
+origin = "thim81/openapi-format@bee0bebc84221c5cf25574dd6af74c135d7efe05"
+classification = "out-of-scope"
+executable = false
+format = "yaml"
+upstream_paths = ["test/_split/snap.yaml", "test/_split/snap_station.yaml", "test/_split/snap_station_id.yaml"]
+upstream_output_paths = []
+upstream_output_is_oracle = false
+coverage = "Multi-file OpenAPI splitting."
+notes = "Splitting and multi-file generation are outside oafmt."
