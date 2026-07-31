@@ -3,13 +3,18 @@
 `oafmt` is a deterministic, syntax-preserving formatter for OpenAPI documents.
 It does not lint, resolve references, or perform general OpenAPI validation.
 
-Phase 3 accepts one UTF-8 YAML or strict JSON OpenAPI 3.0.x, 3.1.x, or 3.2.x
-entry document and classifies reachable OpenAPI objects with version-specific
-semantics. User-visible formatting remains limited to fixed fields at the
-document root and in fixed-method Operation Objects directly below the entry
-document's `paths`, retaining unknown-field slots and all original source
-slices. The Phase 1 experiment remains historical evidence in
-[`PHASE_1_YAML_PRESERVATION.md`](PHASE_1_YAML_PRESERVATION.md).
+`oafmt` accepts UTF-8 YAML and strict JSON OpenAPI 3.0.x, 3.1.x, and
+3.2.x entry documents. It reorders only fixed fields at the entry-document
+root and fixed fields in fixed-method Operation Objects directly below that
+document's `paths`. The fixed methods are `get`, `put`, `post`, `delete`,
+`options`, `head`, `patch`, and `trace`; OpenAPI 3.2 also includes `query`.
+
+Info Objects, Path Item Objects, schemas and `properties`, responses,
+callbacks, webhooks, component Path Items, `additionalOperations`, extensions,
+opaque values, and unexpected shapes are not formatted. Unknown fields retain
+their positional slots, and original source slices retain whitespace, comments,
+line endings, scalar spelling, and style. The executable preservation contract
+is documented in [`YAML_PRESERVATION.md`](YAML_PRESERVATION.md).
 
 ```sh
 oafmt FILE
@@ -112,23 +117,31 @@ parallel.
 
 ## Development
 
-The local and CI gates are:
+Ubuntu CI runs:
 
 ```sh
-ASDF_RUST_VERSION=1.85.0 RUSTUP_TOOLCHAIN=1.85.0 cargo check --locked --workspace --all-features
 cargo fmt --all -- --check
 cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 cargo test --locked --workspace --all-features
 cargo build --locked --workspace --all-features
 RUSTDOCFLAGS="-D warnings" cargo doc --locked --workspace --all-features --no-deps
 cargo deny --locked check
+```
+
+CI separately checks the locked workspace on Rust 1.85. Pull requests also run
+`dist plan` in the generated release workflow. Maximum-policy linting uses Rust
+and Clippy 1.97.1.
+
+Local and release validation additionally runs:
+
+```sh
+ASDF_RUST_VERSION=1.85.0 RUSTUP_TOOLCHAIN=1.85.0 cargo check --locked --workspace --all-features
 dist generate --check
 dist plan
 git diff --check
 ```
 
-Maximum-policy linting uses Rust and Clippy 1.97.1. The declared MSRV remains
-Rust 1.85 and is checked separately in CI. Release prerequisites, crates.io
+`dist generate --check` and `git diff --check` are not CI gates yet. Release
 ordering, recovery, and post-release checks are documented in
 [`RELEASING.md`](RELEASING.md).
 

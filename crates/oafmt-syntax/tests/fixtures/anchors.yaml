@@ -1,5 +1,0 @@
-defaults: &defaults
-  retries: 3
-derived:
-  <<: *defaults
-alias: *defaults

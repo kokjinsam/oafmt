@@ -13,7 +13,7 @@ components:
       type: object
 info:
   version: v
-  title: Phase 3
+  title: Formatting boundary
 webhooks:
   event:
     post:
@@ -21,12 +21,26 @@ webhooks:
       summary: webhook stays
 paths:
   /pets:
+    put: [responses, summary]
     additionalOperations:
       COPY:
         responses: {}
         summary: additional stays
     get:
-      responses: {}
+      responses:
+        '200':
+          headers: {}
+          description: response stays
+      callbacks:
+        done:
+          '{$request.body#/url}':
+            post:
+              responses: {}
+              summary: callback stays
+      x-opaque:
+        get:
+          responses: {}
+          summary: extension stays
       summary: eligible get
     query:
       responses: {}
