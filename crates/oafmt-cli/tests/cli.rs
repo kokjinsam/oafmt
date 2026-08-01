@@ -429,6 +429,263 @@ fn explicit_relative_config_patterns_are_anchored_to_its_directory() {
 }
 
 #[test]
+fn directory_symlink_discovery_uses_the_lexical_config_directory() {
+    let directory = TestDir::new();
+    directory.write(
+        "configuration/oafmt.toml",
+        "[discovery]\ninclude = [\"specs/*.yaml\"]\nexclude = [\"specs/excluded.yaml\"]\n",
+    );
+    let included = directory.write("configuration/specs/api.yaml", input_yaml());
+    let excluded = directory.write("configuration/specs/excluded.yaml", input_yaml());
+    directory.write("configuration/specs/openapi.json", input_json());
+    symlink(
+        directory.path().join("configuration"),
+        directory.path().join("configuration-link"),
+    )
+    .unwrap();
+    let before = [fs::read(&included).unwrap(), fs::read(&excluded).unwrap()];
+
+    let outputs: Vec<_> = (0..2)
+        .map(|_| {
+            let output = command()
+                .current_dir(directory.path())
+                .args([
+                    "--check",
+                    "--config",
+                    "configuration-link/oafmt.toml",
+                    "configuration-link/specs",
+                ])
+                .output()
+                .unwrap();
+            (output.status.code(), output.stdout, output.stderr)
+        })
+        .collect();
+
+    assert_eq!(outputs[0], outputs[1]);
+    assert_eq!(outputs[0].0, Some(1));
+    assert!(outputs[0].1.is_empty());
+    assert_eq!(
+        String::from_utf8(outputs[0].2.clone()).unwrap(),
+        "oafmt: formatting changes required: configuration-link/specs/api.yaml\n"
+    );
+    assert_eq!(fs::read(&included).unwrap(), before[0]);
+    assert_eq!(fs::read(&excluded).unwrap(), before[1]);
+}
+
+#[test]
+fn native_glob_through_directory_symlink_uses_lexical_config_excludes() {
+    let directory = TestDir::new();
+    directory.write(
+        "configuration/oafmt.toml",
+        "[discovery]\nexclude = [\"specs/excluded.yaml\"]\n",
+    );
+    let included = directory.write("configuration/specs/api.yaml", input_yaml());
+    let excluded = directory.write("configuration/specs/excluded.yaml", input_yaml());
+    symlink(
+        directory.path().join("configuration"),
+        directory.path().join("configuration-link"),
+    )
+    .unwrap();
+    let before = [fs::read(&included).unwrap(), fs::read(&excluded).unwrap()];
+
+    let outputs: Vec<_> = (0..2)
+        .map(|_| {
+            let output = command()
+                .current_dir(directory.path())
+                .args([
+                    "--check",
+                    "--config",
+                    "configuration-link/oafmt.toml",
+                    "configuration-link/specs/*.yaml",
+                ])
+                .output()
+                .unwrap();
+            (output.status.code(), output.stdout, output.stderr)
+        })
+        .collect();
+
+    assert_eq!(outputs[0], outputs[1]);
+    assert_eq!(outputs[0].0, Some(1));
+    assert!(outputs[0].1.is_empty());
+    assert_eq!(
+        String::from_utf8(outputs[0].2.clone()).unwrap(),
+        "oafmt: formatting changes required: configuration-link/specs/api.yaml\n"
+    );
+    assert_eq!(fs::read(&included).unwrap(), before[0]);
+    assert_eq!(fs::read(&excluded).unwrap(), before[1]);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn explicit_tmp_config_and_selector_preserve_the_tmp_spelling() {
+    let (directory, lexical_root) = TestDir::new_in_macos_tmp();
+    let config = directory.write("oafmt.toml", "[discovery]\ninclude = [\"specs/*.yaml\"]\n");
+    let selected = directory.write("specs/api.yaml", input_yaml());
+    let before = fs::read(&selected).unwrap();
+    let lexical_config = lexical_root.join("oafmt.toml");
+    let lexical_selector = lexical_root.join("specs");
+
+    let canonical = command()
+        .arg("--check")
+        .arg("--config")
+        .arg(&config)
+        .arg(directory.path().join("specs"))
+        .output()
+        .unwrap();
+    let lexical = command()
+        .arg("--check")
+        .arg("--config")
+        .arg(&lexical_config)
+        .arg(&lexical_selector)
+        .output()
+        .unwrap();
+
+    assert_eq!(canonical.status.code(), Some(1));
+    assert_eq!(lexical.status.code(), canonical.status.code());
+    assert_eq!(lexical.stdout, canonical.stdout);
+    assert_eq!(
+        String::from_utf8(canonical.stderr).unwrap(),
+        format!(
+            "oafmt: formatting changes required: {}\n",
+            selected.display()
+        )
+    );
+    assert_eq!(
+        String::from_utf8(lexical.stderr).unwrap(),
+        format!(
+            "oafmt: formatting changes required: {}\n",
+            lexical_root.join("specs/api.yaml").display()
+        )
+    );
+    assert_eq!(fs::read(&selected).unwrap(), before);
+}
+
+#[test]
+fn explicit_config_accepts_absolute_and_unambiguous_symlink_paths() {
+    let directory = TestDir::new();
+    let source = "[discovery]\ninclude = [\"specs/*.yaml\"]\n";
+
+    let absolute = directory.write("absolute/oafmt.toml", source);
+    directory.write("absolute/specs/api.yaml", input_yaml());
+
+    assert_check_change(
+        directory.path(),
+        &["--config", absolute.to_str().unwrap(), "absolute/specs"],
+        "absolute/specs/api.yaml",
+    );
+
+    let target = directory.write("target/oafmt.toml", source);
+    directory.write("target/specs/decoy.yaml", input_yaml());
+    directory.write("link-config/specs/api.yaml", input_yaml());
+    symlink(&target, directory.path().join("link-config/oafmt.toml")).unwrap();
+
+    assert_check_change(
+        directory.path(),
+        &["--config", "link-config/oafmt.toml", "link-config/specs"],
+        "link-config/specs/api.yaml",
+    );
+
+    directory.write("configuration/oafmt.toml", source);
+    directory.write("configuration/specs/api.yaml", input_yaml());
+    fs::create_dir(directory.path().join("workspace")).unwrap();
+    symlink("configuration", directory.path().join("configuration-link")).unwrap();
+
+    assert_check_change(
+        directory.path(),
+        &[
+            "--config",
+            "configuration-link/oafmt.toml",
+            "configuration-link/specs/api.yaml",
+        ],
+        "configuration-link/specs/api.yaml",
+    );
+    assert_check_change(
+        directory.path(),
+        &[
+            "--config",
+            "workspace/../configuration-link/oafmt.toml",
+            "configuration-link/specs/api.yaml",
+        ],
+        "configuration-link/specs/api.yaml",
+    );
+}
+
+fn assert_check_change(directory: &Path, args: &[&str], expected_file: &str) {
+    let output = command()
+        .current_dir(directory)
+        .arg("--check")
+        .args(args)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert_eq!(
+        String::from_utf8(output.stderr).unwrap(),
+        format!("oafmt: formatting changes required: {expected_file}\n")
+    );
+}
+
+#[test]
+fn parent_component_after_symlinked_config_directory_is_rejected_before_discovery() {
+    let directory = TestDir::new();
+    directory.write("oafmt.toml", "");
+    let selected = directory.write("selected.yaml", input_yaml());
+    fs::create_dir(directory.path().join("configuration")).unwrap();
+    symlink("configuration", directory.path().join("configuration-link")).unwrap();
+    let before = fs::read(&selected).unwrap();
+    let expected = "oafmt: configuration path contains '..' after a symlink: \
+                    configuration-link/../oafmt.toml\n";
+
+    for mode in ["--write", "--check", "--diff"] {
+        let output = command()
+            .current_dir(directory.path())
+            .args([
+                mode,
+                "--config",
+                "configuration-link/../oafmt.toml",
+                "selected.yaml",
+                "missing/**/*.yaml",
+            ])
+            .output()
+            .unwrap();
+
+        assert_eq!(output.status.code(), Some(2), "{mode}");
+        assert!(output.stdout.is_empty(), "{mode}");
+        assert_eq!(
+            String::from_utf8(output.stderr).unwrap(),
+            expected,
+            "{mode}"
+        );
+        assert_eq!(fs::read(&selected).unwrap(), before, "{mode}");
+    }
+}
+
+#[test]
+fn unreadable_explicit_config_is_reported_without_processing_inputs() {
+    let directory = TestDir::new();
+    let config = directory.write("oafmt.toml", "");
+    let selected = directory.write("selected.yaml", input_yaml());
+    let before = fs::read(&selected).unwrap();
+    fs::set_permissions(&config, fs::Permissions::from_mode(0o000)).unwrap();
+
+    let output = command()
+        .current_dir(directory.path())
+        .args(["--write", "--config", "oafmt.toml", "selected.yaml"])
+        .output()
+        .unwrap();
+    fs::set_permissions(&config, fs::Permissions::from_mode(0o600)).unwrap();
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .starts_with("oafmt: cannot read configuration ")
+    );
+    assert_eq!(fs::read(&selected).unwrap(), before);
+}
+
+#[test]
 fn native_globs_deduplicate_overlaps_and_explicit_spelling_wins() {
     let directory = TestDir::new();
     directory.write("a/openapi.yaml", input_yaml());
@@ -1810,6 +2067,18 @@ impl TestDir {
         ));
         fs::create_dir(&path).unwrap();
         Self(fs::canonicalize(path).unwrap())
+    }
+
+    #[cfg(target_os = "macos")]
+    fn new_in_macos_tmp() -> (Self, PathBuf) {
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        let lexical = PathBuf::from("/tmp").join(format!(
+            "oafmt-cli-test-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&lexical).unwrap();
+        (Self(fs::canonicalize(&lexical).unwrap()), lexical)
     }
 
     fn path(&self) -> &Path {

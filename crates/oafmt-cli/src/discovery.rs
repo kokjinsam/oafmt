@@ -159,7 +159,8 @@ fn discover_directory(
                 }
                 let display = display_root.join(relative_to_root);
                 let identity = normalize_lexically(path);
-                let config_relative = relative_path(&config.directory, &identity);
+                let lexical_candidate = absolute_root.join(relative_to_root);
+                let config_relative = relative_path(&config.directory, &lexical_candidate);
                 let included = include.map_or_else(
                     || {
                         matches!(
@@ -237,7 +238,7 @@ fn discover_glob(
         return;
     }
     let root = absolute(&plan.prefix, cwd);
-    let walk_root = fs::canonicalize(&root).unwrap_or(root);
+    let walk_root = fs::canonicalize(&root).unwrap_or_else(|_| root.clone());
     let mut count = 0;
     if !contains_vcs_metadata(&plan.prefix) && !contains_vcs_metadata(&walk_root) {
         walk(
@@ -254,7 +255,8 @@ fn discover_glob(
                     return;
                 }
                 let identity = normalize_lexically(path);
-                let config_relative = relative_path(&config.directory, &identity);
+                let lexical_candidate = root.join(match_path);
+                let config_relative = relative_path(&config.directory, &lexical_candidate);
                 if plan.matcher.is_match(match_path)
                     && !exclude.is_some_and(|patterns| matches_any(patterns, &config_relative))
                 {
@@ -415,7 +417,7 @@ fn glob_display(prefix: &Path, match_path: &Path, cwd: Option<&Path>) -> PathBuf
     }
 }
 
-fn symlink_precedes_parent(path: &Path, cwd: Option<&Path>) -> bool {
+pub(super) fn symlink_precedes_parent(path: &Path, cwd: Option<&Path>) -> bool {
     let mut prefix = if path.is_absolute() {
         PathBuf::new()
     } else {

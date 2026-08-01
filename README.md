@@ -74,6 +74,10 @@ as ordinary literal files and retain the literal-file rules.
 
 For `--write`, `--check`, and `--diff`, `oafmt` finds the nearest `oafmt.toml`
 from the current directory upward. `--config PATH` overrides that lookup.
+An explicit config path may be relative or absolute and may traverse symlinked
+files or directories. Parent (`..`) components are accepted before the first
+symlink component, but a parent component after a symlink component is rejected
+as ambiguous before configuration reading, discovery, preflight, or writes.
 Configuration is strict and affects discovery only:
 
 ```toml
@@ -85,12 +89,14 @@ respect_gitignore = true
 
 `include`, when supplied, must be non-empty and replaces the default directory
 basenames. `exclude` is optional and always wins. Patterns are relative to the
-configuration file's directory. The supported component-aware glob syntax is
-`*`, `?`, character classes, and `**`. Brace expansion and shell syntax are not
-supported; literal braces may be matched inside character classes, such as
-`file[{].yaml` and `file[}].yaml`. Unknown fields, invalid types, empty supplied
-include lists, missing explicit config files, and malformed patterns are errors
-before any file is processed or written.
+configuration file's lexically named directory, including when the file is a
+symlink; they are not re-anchored to the symlink target's directory. The
+supported component-aware glob syntax is `*`, `?`, character classes, and `**`.
+Brace expansion and shell syntax are not supported; literal braces may be
+matched inside character classes, such as `file[{].yaml` and `file[}].yaml`.
+Unknown fields, invalid types, empty supplied include lists, missing explicit
+config files, and malformed patterns are errors before any file is processed or
+written.
 
 Directory and native-glob discovery respects repository and nested `.gitignore`
 files by default, without consulting global or system ignore files. Set

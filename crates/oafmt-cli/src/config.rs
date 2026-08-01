@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
-use crate::discovery::{normalize_lexically, validate_pattern};
+use crate::discovery::{normalize_lexically, symlink_precedes_parent, validate_pattern};
 
 #[derive(Debug)]
 pub(super) struct Config {
@@ -36,13 +36,19 @@ const fn default_true() -> bool {
 pub(super) fn load(explicit: Option<&Path>, cwd: Option<&Path>) -> Result<Config, String> {
     let path = match explicit {
         Some(path) => {
-            let path = if path.is_absolute() {
+            let unresolved = if path.is_absolute() {
                 path.to_path_buf()
             } else {
                 cwd.ok_or_else(|| "cannot determine current directory".to_owned())?
                     .join(path)
             };
-            let path = normalize_lexically(&path);
+            if symlink_precedes_parent(&unresolved, None) {
+                return Err(format!(
+                    "configuration path contains '..' after a symlink: {}",
+                    path.display()
+                ));
+            }
+            let path = normalize_lexically(&unresolved);
             if !path.is_file() {
                 return Err(format!(
                     "configuration file does not exist: {}",
