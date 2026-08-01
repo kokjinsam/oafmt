@@ -1,0 +1,13 @@
+openapi: 3.1.0
+info: &info
+  title: Pets
+  version: v
+paths: {}
+x-first: *info
+x-second: *info
+x-defaults: &defaults
+  enabled: true
+x-derived:
+  <<: *defaults
+x-cycle: &cycle
+  self: *cycle

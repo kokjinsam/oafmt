@@ -1,0 +1,48 @@
+openapi: 3.2.0
+info:
+  version: v
+  title: Formatting boundary
+paths:
+  /pets:
+    put: [responses, summary]
+    additionalOperations:
+      COPY:
+        responses: {}
+        summary: additional stays
+    get:
+      summary: eligible get
+      responses:
+        '200':
+          headers: {}
+          description: response stays
+      x-opaque:
+        get:
+          responses: {}
+          summary: extension stays
+      callbacks:
+        done:
+          '{$request.body#/url}':
+            post:
+              responses: {}
+              summary: callback stays
+    query:
+      summary: eligible query
+      responses: {}
+webhooks:
+  event:
+    post:
+      responses: {}
+      summary: webhook stays
+components:
+  pathItems:
+    Shared:
+      get:
+        responses: {}
+        summary: component stays
+  schemas:
+    Pet:
+      properties:
+        name:
+          description: newly classified stays
+          type: string
+      type: object

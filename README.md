@@ -132,6 +132,13 @@ CI separately checks the locked workspace on Rust 1.85. Pull requests also run
 `dist plan` in the generated release workflow. Maximum-policy linting uses Rust
 and Clippy 1.97.1.
 
+CI also builds and smoke-tests four fuzz targets on
+`nightly-2026-07-30` with `cargo-fuzz` 0.13.2. It replays the committed YAML
+and JSON seeds, then runs a deterministic bounded campaign for formatting,
+classification, and edit-plan safety. A weekly Ubuntu workflow runs longer
+campaigns. Setup, replay, minimization, and corpus handling are documented in
+[`fuzz/README.md`](fuzz/README.md).
+
 Local and release validation additionally runs:
 
 ```sh

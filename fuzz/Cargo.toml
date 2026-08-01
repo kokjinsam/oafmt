@@ -1,0 +1,46 @@
+[package]
+name = "oafmt-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+license = "MIT"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+oafmt-core = { version = "=0.1.0", path = "../crates/oafmt-core" }
+oafmt-oas = { version = "=0.1.0", path = "../crates/oafmt-oas" }
+oafmt-syntax = { version = "=0.1.0", path = "../crates/oafmt-syntax" }
+
+[[bin]]
+name = "format_yaml"
+path = "fuzz_targets/format_yaml.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "format_json"
+path = "fuzz_targets/format_json.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "classify_oas"
+path = "fuzz_targets/classify_oas.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "reorder_edits"
+path = "fuzz_targets/reorder_edits.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+members = ["."]

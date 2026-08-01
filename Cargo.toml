@@ -5,6 +5,7 @@ members = [
     "crates/oafmt-oas",
     "crates/oafmt-syntax",
 ]
+exclude = ["fuzz"]
 resolver = "3"
 
 [workspace.package]

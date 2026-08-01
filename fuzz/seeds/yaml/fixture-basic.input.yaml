@@ -1,0 +1,9 @@
+# entry document
+paths:
+  /pets:
+    get:
+      responses: {}
+      x-middle: keep
+      summary: "List pets"
+openapi: 3.1.0
+info: {title: Pets, version: '01'}

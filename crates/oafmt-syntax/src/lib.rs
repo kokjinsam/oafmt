@@ -189,6 +189,7 @@ pub fn reorder_mappings(
 ) -> Result<String, SyntaxError> {
     let mut replacements = Vec::with_capacity(mappings.len());
     for (mapping, order) in mappings {
+        validate_mapping_plan(source, mapping)?;
         let replacement = render_mapping(source, mapping, order, format)?;
         if replacement != source[mapping.range.start..mapping.range.end] {
             replacements.push((mapping.range, replacement));
@@ -214,6 +215,39 @@ pub fn reorder_mappings(
         output.replace_range(range.start..range.end, &replacement);
     }
     Ok(output)
+}
+
+fn validate_mapping_plan(source: &str, mapping: &MappingInfo) -> Result<(), SyntaxError> {
+    if !is_source_range(source, mapping.range) {
+        return Err(SyntaxError::InvalidInput(
+            "formatted mapping range is outside the source".into(),
+        ));
+    }
+
+    let mut previous_end = mapping.range.start;
+    for entry in &mapping.entries {
+        if !is_source_range(source, entry.range)
+            || entry.range.start < mapping.range.start
+            || entry.range.end > mapping.range.end
+            || entry.range.start < previous_end
+            || !is_source_range(source, entry.content_range)
+            || entry.content_range.start < entry.range.start
+            || entry.content_range.end > entry.range.end
+        {
+            return Err(SyntaxError::InvalidInput(
+                "formatted mapping entry ranges are invalid".into(),
+            ));
+        }
+        previous_end = entry.range.end;
+    }
+    Ok(())
+}
+
+fn is_source_range(source: &str, range: ByteRange) -> bool {
+    range.start < range.end
+        && range.end <= source.len()
+        && source.is_char_boundary(range.start)
+        && source.is_char_boundary(range.end)
 }
 
 /// Reparse and compare complete document semantics.

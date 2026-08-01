@@ -1,0 +1,59 @@
+name: Fuzz
+
+on:
+  schedule:
+    - cron: '17 3 * * 0'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: format_yaml
+            seed_dirs: fuzz/seeds/yaml
+          - target: format_json
+            seed_dirs: fuzz/seeds/json
+          - target: classify_oas
+            seed_dirs: fuzz/seeds/yaml fuzz/seeds/json
+          - target: reorder_edits
+            seed_dirs: fuzz/seeds/yaml fuzz/seeds/json
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install fuzzing toolchain
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          toolchain: nightly-2026-07-30
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --version 0.13.2 --locked
+
+      - name: Build fuzz target
+        run: cargo +nightly-2026-07-30 fuzz build ${{ matrix.target }}
+
+      - name: Run fuzz campaign
+        env:
+          SEED_DIRS: ${{ matrix.seed_dirs }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          mkdir -p "fuzz/corpus/$TARGET"
+          cargo +nightly-2026-07-30 fuzz run "$TARGET" \
+            "fuzz/corpus/$TARGET" $SEED_DIRS -- \
+            -seed=424242 -max_total_time=900 -max_len=1048576 \
+            -timeout=10 -rss_limit_mb=2048
+
+      - name: Upload fuzz artifacts
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzz-${{ matrix.target }}
+          path: fuzz/artifacts/${{ matrix.target }}
+          if-no-files-found: ignore
+          retention-days: 14

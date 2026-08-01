@@ -1,0 +1,27 @@
+[advisories]
+ignore = []
+
+[licenses]
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Unlicense",
+]
+confidence-threshold = 0.8
+exceptions = [
+    # libfuzzer-sys statically builds LLVM's libFuzzer runtime.
+    { allow = ["NCSA"], crate = "libfuzzer-sys" },
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+highlight = "all"
+skip = []
+skip-tree = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

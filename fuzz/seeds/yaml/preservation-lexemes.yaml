@@ -1,0 +1,20 @@
+openapi: 3.1.0
+info: {title: "Café ☕", version: '00000000000000000001'}
+paths:
+  /pets:
+    get:
+      summary: "List\npets"
+      x-preservation:
+        plain: 001234567890123456789012345678901234567890
+        decimal: 12345678901234567890.12345678901234567890
+        numeric-string: '0012345678901234567890'
+        literal: |2-
+            literal
+            text
+        folded: >+2
+            folded
+            text
+        local: !local value
+        standard: !!str 123
+        flow: [one, {two: 2}]
+      responses: {}

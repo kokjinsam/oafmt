@@ -42,6 +42,11 @@ jobs:
       - name: Audit dependencies
         run: cargo deny --locked check
 
+      - name: Audit fuzz dependencies
+        run: >-
+          cargo deny --manifest-path fuzz/Cargo.toml
+          --config fuzz/deny.toml --locked check
+
   msrv:
     runs-on: ubuntu-latest
     env:
@@ -60,3 +65,64 @@ jobs:
 
       - name: Check workspace at MSRV
         run: cargo check --locked --workspace --all-features
+
+  fuzz-smoke:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: format_yaml
+            seed_dirs: fuzz/seeds/yaml
+          - target: format_json
+            seed_dirs: fuzz/seeds/json
+          - target: classify_oas
+            seed_dirs: fuzz/seeds/yaml fuzz/seeds/json
+          - target: reorder_edits
+            seed_dirs: fuzz/seeds/yaml fuzz/seeds/json
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install fuzzing toolchain
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          toolchain: nightly-2026-07-30
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --version 0.13.2 --locked
+
+      - name: Build fuzz target
+        run: cargo +nightly-2026-07-30 fuzz build ${{ matrix.target }}
+
+      - name: Replay committed seeds
+        env:
+          SEED_DIRS: ${{ matrix.seed_dirs }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          for seed_dir in $SEED_DIRS; do
+            while IFS= read -r -d '' seed; do
+              cargo +nightly-2026-07-30 fuzz run "$TARGET" "$seed" -- \
+                -runs=1 -timeout=5 -rss_limit_mb=2048
+            done < <(find "$seed_dir" -type f -print0 | sort -z)
+          done
+
+      - name: Run bounded fuzz campaign
+        env:
+          SEED_DIRS: ${{ matrix.seed_dirs }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          mkdir -p "fuzz/corpus/$TARGET"
+          cargo +nightly-2026-07-30 fuzz run "$TARGET" \
+            "fuzz/corpus/$TARGET" $SEED_DIRS -- \
+            -seed=424242 -runs=512 -max_total_time=30 -max_len=65536 \
+            -timeout=5 -rss_limit_mb=2048
+
+      - name: Upload fuzz artifacts
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzz-smoke-${{ matrix.target }}
+          path: fuzz/artifacts/${{ matrix.target }}
+          if-no-files-found: ignore
+          retention-days: 7

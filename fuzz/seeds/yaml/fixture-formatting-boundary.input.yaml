@@ -1,0 +1,48 @@
+components:
+  pathItems:
+    Shared:
+      get:
+        responses: {}
+        summary: component stays
+  schemas:
+    Pet:
+      properties:
+        name:
+          description: newly classified stays
+          type: string
+      type: object
+info:
+  version: v
+  title: Formatting boundary
+webhooks:
+  event:
+    post:
+      responses: {}
+      summary: webhook stays
+paths:
+  /pets:
+    put: [responses, summary]
+    additionalOperations:
+      COPY:
+        responses: {}
+        summary: additional stays
+    get:
+      responses:
+        '200':
+          headers: {}
+          description: response stays
+      callbacks:
+        done:
+          '{$request.body#/url}':
+            post:
+              responses: {}
+              summary: callback stays
+      x-opaque:
+        get:
+          responses: {}
+          summary: extension stays
+      summary: eligible get
+    query:
+      responses: {}
+      summary: eligible query
+openapi: 3.2.0

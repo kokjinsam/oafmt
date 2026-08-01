@@ -124,6 +124,150 @@ fn invalid_or_overlapping_edits_fail_closed() {
             if message == "formatted mapping ranges overlap"
     ));
 
+    let mut outside_source = root.clone();
+    outside_source.range = ByteRange {
+        start: source.len() + 1,
+        end: source.len() + 2,
+    };
+    assert!(matches!(
+        reorder_mappings(
+            source,
+            &[(&outside_source, &["openapi", "info", "paths"])],
+            InputFormat::Yaml,
+        ),
+        Err(SyntaxError::InvalidInput(message))
+            if message == "formatted mapping range is outside the source"
+    ));
+
+    let mut reversed_entry_range = root.clone();
+    reversed_entry_range.entries[0].content_range = ByteRange {
+        start: reversed_entry_range.entries[0].range.end,
+        end: reversed_entry_range.entries[0].range.start,
+    };
+    assert!(matches!(
+        reorder_mappings(
+            source,
+            &[(&reversed_entry_range, &["openapi", "info", "paths"])],
+            InputFormat::Yaml,
+        ),
+        Err(SyntaxError::InvalidInput(message))
+            if message == "formatted mapping entry ranges are invalid"
+    ));
+}
+
+#[test]
+fn empty_mapping_entry_and_content_ranges_are_rejected() {
+    let source = "info: {}\nopenapi: 3.1.0\npaths: {}\n";
+    let document = inspect_document(source, InputFormat::Yaml).unwrap();
+    let root = document
+        .mappings
+        .iter()
+        .find(|mapping| mapping.range == document.root)
+        .unwrap();
+
+    let mut empty_mapping_range = root.clone();
+    empty_mapping_range.range.end = empty_mapping_range.range.start;
+    empty_mapping_range.entries.truncate(1);
+    empty_mapping_range.entries[0].range = empty_mapping_range.range;
+    empty_mapping_range.entries[0].content_range = empty_mapping_range.range;
+    assert!(matches!(
+        reorder_mappings(
+            source,
+            &[(&empty_mapping_range, &["info"])],
+            InputFormat::Yaml,
+        ),
+        Err(SyntaxError::InvalidInput(message))
+            if message == "formatted mapping range is outside the source"
+    ));
+
+    let mut empty_entry_range = root.clone();
+    let entry_start = empty_entry_range.entries[0].range.start;
+    empty_entry_range.entries[0].range = ByteRange {
+        start: entry_start,
+        end: entry_start,
+    };
+    empty_entry_range.entries[0].content_range = empty_entry_range.entries[0].range;
+    assert!(matches!(
+        reorder_mappings(
+            source,
+            &[(&empty_entry_range, &["info", "openapi", "paths"])],
+            InputFormat::Yaml,
+        ),
+        Err(SyntaxError::InvalidInput(message))
+            if message == "formatted mapping entry ranges are invalid"
+    ));
+
+    let mut empty_content_range = root.clone();
+    let content_start = empty_content_range.entries[0].content_range.start;
+    empty_content_range.entries[0].content_range = ByteRange {
+        start: content_start,
+        end: content_start,
+    };
+    assert!(matches!(
+        reorder_mappings(
+            source,
+            &[(&empty_content_range, &["info", "openapi", "paths"])],
+            InputFormat::Yaml,
+        ),
+        Err(SyntaxError::InvalidInput(message))
+            if message == "formatted mapping entry ranges are invalid"
+    ));
+}
+
+#[test]
+fn out_of_source_and_non_character_boundary_entry_ranges_are_rejected() {
+    let source = "info: {}\nopenapi: 3.1.0\npaths: {}\n";
+    let document = inspect_document(source, InputFormat::Yaml).unwrap();
+    let root = document
+        .mappings
+        .iter()
+        .find(|mapping| mapping.range == document.root)
+        .unwrap();
+
+    let mut outside_entry_range = root.clone();
+    outside_entry_range.entries[0].range.end = source.len() + 1;
+    assert!(matches!(
+        reorder_mappings(
+            source,
+            &[(&outside_entry_range, &["info", "openapi", "paths"])],
+            InputFormat::Yaml,
+        ),
+        Err(SyntaxError::InvalidInput(message))
+            if message == "formatted mapping entry ranges are invalid"
+    ));
+
+    let unicode_source = "é: one\nother: two\n";
+    let unicode_document = inspect_document(unicode_source, InputFormat::Yaml).unwrap();
+    let unicode_root = unicode_document
+        .mappings
+        .iter()
+        .find(|mapping| mapping.range == unicode_document.root)
+        .unwrap();
+
+    let mut non_boundary_entry = unicode_root.clone();
+    non_boundary_entry.entries[0].range.start = 1;
+    assert!(matches!(
+        reorder_mappings(
+            unicode_source,
+            &[(&non_boundary_entry, &["é", "other"])],
+            InputFormat::Yaml,
+        ),
+        Err(SyntaxError::InvalidInput(message))
+            if message == "formatted mapping entry ranges are invalid"
+    ));
+
+    let mut non_boundary_content = unicode_root.clone();
+    non_boundary_content.entries[0].content_range.start = 1;
+    assert!(matches!(
+        reorder_mappings(
+            unicode_source,
+            &[(&non_boundary_content, &["é", "other"])],
+            InputFormat::Yaml,
+        ),
+        Err(SyntaxError::InvalidInput(message))
+            if message == "formatted mapping entry ranges are invalid"
+    ));
+
     let flow = "{openapi: 3.1.0, info: {}, paths: {}}\n";
     let flow_document = inspect_document(flow, InputFormat::Yaml).unwrap();
     let flow_root = flow_document
