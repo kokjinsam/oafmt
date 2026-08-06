@@ -45,7 +45,7 @@ jobs:
       - name: Audit fuzz dependencies
         run: >-
           cargo deny --manifest-path fuzz/Cargo.toml
-          --config fuzz/deny.toml --locked check
+          --locked check --config fuzz/deny.toml
 
   msrv:
     runs-on: ubuntu-latest
