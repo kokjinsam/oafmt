@@ -4,19 +4,16 @@ The fuzz workspace is independent from the published workspace. It has its own
 `Cargo.lock`, uses `libfuzzer-sys` 0.4.13, and does not change the root Rust 1.85
 dependency graph.
 
-Install the pinned tools:
+Install the pinned fuzz tools through the public setup recipe:
 
 ```sh
-rustup toolchain install nightly-2026-07-30 --profile minimal
-cargo install cargo-fuzz --version 0.13.2 --locked
+just setup fuzz
 ```
 
-Build every target:
+Run the bounded smoke campaign for every target:
 
 ```sh
-cargo +nightly-2026-07-30 fuzz build
-cargo deny --manifest-path fuzz/Cargo.toml \
-  --config fuzz/deny.toml --locked check
+just fuzz-smoke
 ```
 
 The four raw-byte targets are:
@@ -26,24 +23,16 @@ The four raw-byte targets are:
 - `classify_oas`: deterministic YAML and JSON semantic classification
 - `reorder_edits`: inspected edits plus overlapping and malformed edit plans
 
-Generated writable corpora live under ignored
-`fuzz/corpus/<target>`. Keep that directory first and the committed read-only
-seed directories after it:
+Generated writable corpora live under ignored `fuzz/corpus/<target>`. Run a
+long campaign for all targets or one named target with the public recipe:
 
 ```sh
-mkdir -p fuzz/corpus/format_yaml
-cargo +nightly-2026-07-30 fuzz run format_yaml \
-  fuzz/corpus/format_yaml fuzz/seeds/yaml -- \
-  -seed=424242 -max_len=65536 -timeout=5 -rss_limit_mb=2048
-
-mkdir -p fuzz/corpus/classify_oas
-cargo +nightly-2026-07-30 fuzz run classify_oas \
-  fuzz/corpus/classify_oas fuzz/seeds/yaml fuzz/seeds/json -- \
-  -seed=424242 -max_len=65536 -timeout=5 -rss_limit_mb=2048
+just fuzz
+just fuzz format_yaml
 ```
 
-Use `fuzz/seeds/json` for `format_json`; use both committed seed directories for
-`classify_oas` and `reorder_edits`. To replay one saved failure exactly:
+Use the following direct `cargo-fuzz` commands only for specialized crash
+analysis that the public recipes cannot express. Replay one saved failure:
 
 ```sh
 cargo +nightly-2026-07-30 fuzz run reorder_edits \

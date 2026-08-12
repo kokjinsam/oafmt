@@ -14,40 +14,37 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - target: format_yaml
-            seed_dirs: fuzz/seeds/yaml
-          - target: format_json
-            seed_dirs: fuzz/seeds/json
-          - target: classify_oas
-            seed_dirs: fuzz/seeds/yaml fuzz/seeds/json
-          - target: reorder_edits
-            seed_dirs: fuzz/seeds/yaml fuzz/seeds/json
+        target:
+          - format_yaml
+          - format_json
+          - classify_oas
+          - reorder_edits
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
 
-      - name: Install fuzzing toolchain
-        uses: dtolnay/rust-toolchain@nightly
+      - name: Read repository tool versions
+        id: versions
+        run: scripts/tools ci-versions >> "$GITHUB_OUTPUT"
+
+      - name: Set up Just
+        uses: kokjinsam/setup-just@v1.0.0
         with:
-          toolchain: nightly-2026-07-30
+          version-type: strict
+          version-file: .tool-versions
 
-      - name: Install cargo-fuzz
-        run: cargo install cargo-fuzz --version 0.13.2 --locked
+      - name: Set up Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: ${{ steps.versions.outputs.nightly_rust }}
+          cache: false
+          rustflags: ""
 
-      - name: Build fuzz target
-        run: cargo +nightly-2026-07-30 fuzz build ${{ matrix.target }}
+      - name: Set up fuzz tools
+        run: just setup fuzz
 
       - name: Run fuzz campaign
-        env:
-          SEED_DIRS: ${{ matrix.seed_dirs }}
-          TARGET: ${{ matrix.target }}
-        run: |
-          mkdir -p "fuzz/corpus/$TARGET"
-          cargo +nightly-2026-07-30 fuzz run "$TARGET" \
-            "fuzz/corpus/$TARGET" $SEED_DIRS -- \
-            -seed=424242 -max_total_time=900 -max_len=1048576 \
-            -timeout=10 -rss_limit_mb=2048
+        run: just fuzz "${{ matrix.target }}"
 
       - name: Upload fuzz artifacts
         if: failure()

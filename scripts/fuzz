@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+mode="${1:-}"
+requested_target="${2:-all}"
+
+case "$mode" in
+  smoke | full) ;;
+  *)
+    printf 'error: unknown fuzz mode: %s\n' "$mode" >&2
+    exit 1
+    ;;
+esac
+
+all_targets=(format_yaml format_json classify_oas reorder_edits)
+
+case "$requested_target" in
+  all) targets=("${all_targets[@]}") ;;
+  format_yaml | format_json | classify_oas | reorder_edits) targets=("$requested_target") ;;
+  *)
+    printf 'error: unknown fuzz target: %s\n' "$requested_target" >&2
+    exit 1
+    ;;
+esac
+
+eval "$(scripts/tools env nightly)"
+scripts/tools check fuzz
+
+for target in "${targets[@]}"; do
+  case "$target" in
+    format_yaml) seed_dirs=(fuzz/seeds/yaml) ;;
+    format_json) seed_dirs=(fuzz/seeds/json) ;;
+    classify_oas | reorder_edits) seed_dirs=(fuzz/seeds/yaml fuzz/seeds/json) ;;
+  esac
+
+  cargo-fuzz build "$target"
+  if [[ "$mode" == smoke ]]; then
+    for seed_dir in "${seed_dirs[@]}"; do
+      while IFS= read -r -d '' seed; do
+        cargo-fuzz run "$target" "$seed" -- -runs=1 -timeout=5 -rss_limit_mb=2048
+      done < <(find "$seed_dir" -type f -print0 | sort -z)
+    done
+  fi
+
+  mkdir -p "fuzz/corpus/$target"
+  if [[ "$mode" == smoke ]]; then
+    cargo-fuzz run "$target" "fuzz/corpus/$target" "${seed_dirs[@]}" -- \
+      -seed=424242 -runs=512 -max_total_time=30 -max_len=65536 \
+      -timeout=5 -rss_limit_mb=2048
+  else
+    cargo-fuzz run "$target" "fuzz/corpus/$target" "${seed_dirs[@]}" -- \
+      -seed=424242 -max_total_time=900 -max_len=1048576 \
+      -timeout=10 -rss_limit_mb=2048
+  fi
+done

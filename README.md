@@ -123,15 +123,15 @@ parallel.
 
 ## Development
 
-Ubuntu CI runs:
+Install the complete pinned local toolchain through asdf 0.16.5, then run the
+public verification recipes:
 
 ```sh
-cargo fmt --all -- --check
-cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
-cargo test --locked --workspace --all-features
-cargo build --locked --workspace --all-features
-RUSTDOCFLAGS="-D warnings" cargo doc --locked --workspace --all-features --no-deps
-cargo deny --locked check
+just setup
+just check
+just msrv
+just audit
+just release-check
 ```
 
 CI separately checks the locked workspace on Rust 1.85. Pull requests also run
@@ -145,18 +145,11 @@ classification, and edit-plan safety. A weekly Ubuntu workflow runs longer
 campaigns. Setup, replay, minimization, and corpus handling are documented in
 [`fuzz/README.md`](fuzz/README.md).
 
-Local and release validation additionally runs:
+Run the four bounded fuzz smoke campaigns with:
 
 ```sh
-ASDF_RUST_VERSION=1.85.0 RUSTUP_TOOLCHAIN=1.85.0 cargo check --locked --workspace --all-features
-dist generate --check
-dist plan
-git diff --check
+just fuzz-smoke
 ```
-
-`dist generate --check` and `git diff --check` are not CI gates yet. Release
-ordering, recovery, and post-release checks are documented in
-[`RELEASING.md`](RELEASING.md).
 
 ## License
 

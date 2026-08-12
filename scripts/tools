@@ -1,0 +1,277 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+tool_versions_file="${OAFMT_TOOL_VERSIONS_FILE:-.tool-versions}"
+cargo_manifest="${OAFMT_CARGO_MANIFEST:-Cargo.toml}"
+
+fail() {
+  printf 'error: %s\n' "$*" >&2
+  exit 1
+}
+
+normalize_rust_version() {
+  local value="$1"
+  if [[ "$value" =~ ^1\.([0-9]+)$ ]]; then
+    printf '1.%s.0\n' "${BASH_REMATCH[1]}"
+  elif [[ "$value" =~ ^1\.[0-9]+\.[0-9]+$ ]]; then
+    printf '%s\n' "$value"
+  else
+    fail "malformed workspace rust-version: $value"
+  fi
+}
+
+read_authorities() {
+  local cargo_msrv_raw
+  local -a cargo_msrv_records=() rust_values=() just_values=() records=() fields=()
+  local -a stable_values=() nightly_values=()
+
+  [[ -f "$cargo_manifest" ]] || fail "missing authority file: $cargo_manifest"
+  [[ -f "$tool_versions_file" ]] || fail "missing authority file: $tool_versions_file"
+
+  while IFS= read -r value; do
+    cargo_msrv_records+=("$value")
+  done < <(awk '
+    /^\[workspace\.package\][[:space:]]*$/ { in_workspace_package = 1; next }
+    /^\[/ { in_workspace_package = 0 }
+    in_workspace_package && /^[[:space:]]*rust-version[[:space:]]*=/ {
+      line = $0
+      sub(/^[^=]*=[[:space:]]*/, "", line)
+      sub(/[[:space:]]*#.*$/, "", line)
+      gsub(/^[[:space:]]*"|"[[:space:]]*$/, "", line)
+      print line
+    }
+  ' "$cargo_manifest")
+  ((${#cargo_msrv_records[@]} == 1)) || fail "Cargo.toml must contain exactly one workspace rust-version"
+  cargo_msrv_raw="${cargo_msrv_records[0]}"
+  msrv="$(normalize_rust_version "$cargo_msrv_raw")"
+
+  while IFS= read -r value; do
+    records+=("$value")
+  done < <(awk 'NF && $1 !~ /^#/ { print }' "$tool_versions_file")
+  ((${#records[@]} == 2)) || fail ".tool-versions must contain exactly one rust record and one just record"
+  local record key index
+  for record in "${records[@]}"; do
+    read -r -a fields <<<"$record"
+    key="${fields[0]}"
+    case "$key" in
+      rust)
+        for ((index = 1; index < ${#fields[@]}; index += 1)); do
+          rust_values+=("${fields[index]}")
+        done
+        ;;
+      just)
+        for ((index = 1; index < ${#fields[@]}; index += 1)); do
+          just_values+=("${fields[index]}")
+        done
+        ;;
+      *) fail "unexpected .tool-versions record: $key" ;;
+    esac
+  done
+
+  ((${#rust_values[@]} == 3)) || fail "rust record must contain exactly three versions"
+  ((${#just_values[@]} == 1)) || fail "just record must contain exactly one version"
+  [[ "${just_values[0]}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "malformed Just version: ${just_values[0]}"
+  just_version="${just_values[0]}"
+
+  local value
+  for value in "${rust_values[@]}"; do
+    if [[ "$value" =~ ^nightly-[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+      nightly_values+=("$value")
+    elif [[ "$value" =~ ^1\.[0-9]+\.[0-9]+$ ]]; then
+      stable_values+=("$value")
+    else
+      fail "malformed Rust version: $value"
+    fi
+  done
+  ((${#nightly_values[@]} == 1)) || fail "rust record must contain exactly one dated nightly version"
+  ((${#stable_values[@]} == 2)) || fail "rust record must contain exactly two stable versions"
+  nightly="${nightly_values[0]}"
+
+  local msrv_matches=0
+  for value in "${stable_values[@]}"; do
+    if [[ "$value" == "$msrv" ]]; then
+      ((msrv_matches += 1))
+    fi
+  done
+  ((msrv_matches == 1)) || fail ".tool-versions MSRV does not match Cargo.toml rust-version $msrv"
+  current=""
+  for value in "${stable_values[@]}"; do
+    if [[ "$value" != "$msrv" ]]; then
+      [[ -z "$current" ]] || fail "ambiguous current Rust version"
+      current="$value"
+    fi
+  done
+  [[ -n "$current" && "$current" != "$msrv" ]] || fail "ambiguous current Rust version"
+}
+
+command_version() {
+  local command="$1"
+  "$command" --version 2>/dev/null | awk 'NR == 1 { print $2 }'
+}
+
+require_version() {
+  local label="$1" expected="$2" command="$3" actual
+  actual="$({ command_version "$command" || true; })"
+  [[ "$actual" == "$expected" ]] || fail "$label $expected is required, found ${actual:-missing}"
+}
+
+require_command() {
+  local label="$1" command="$2"
+  command -v "$command" >/dev/null 2>&1 || fail "$label is required, found missing"
+}
+
+select_toolchain() {
+  printf 'export ASDF_RUST_VERSION=%q\n' "$1"
+  printf 'export RUSTUP_TOOLCHAIN=%q\n' "$1"
+}
+
+check_just() {
+  require_version Just "$just_version" just
+}
+
+check_current() {
+  require_version rustc "$current" rustc
+  require_version Cargo "$current" cargo
+  check_just
+  require_command rustfmt rustfmt
+  require_command Clippy cargo-clippy
+}
+
+check_msrv() {
+  require_version rustc "$msrv" rustc
+  require_version Cargo "$msrv" cargo
+  check_just
+}
+
+check_nightly() {
+  local active
+  active="$(rustup show active-toolchain 2>/dev/null | awk 'NR == 1 { print $1 }')"
+  [[ "$active" == "$nightly" || "$active" == "$nightly-"* ]] || fail "$nightly Rust toolchain is required, found ${active:-missing}"
+  require_command rustc rustc
+  require_command Cargo cargo
+  check_just
+}
+
+check_cargo_app() {
+  local label="$1" expected="$2" command="$3"
+  require_version "$label" "$expected" "$command"
+}
+
+install_cargo_app() {
+  local toolchain="$1" crate="$2" label="$3" binary="$4" version="$5" actual
+  actual="$({ command_version "$binary" || true; })"
+  if [[ "$actual" != "$version" ]]; then
+    ASDF_RUST_VERSION="$toolchain" RUSTUP_TOOLCHAIN="$toolchain" \
+      cargo install --locked --force "$crate" --version "$version"
+  fi
+  check_cargo_app "$label" "$version" "$binary"
+}
+
+setup_local_base() {
+  local group="$1" actual
+  actual="$({ asdf version 2>/dev/null || true; })"
+  [[ "$actual" == "0.16.5" ]] || fail "asdf 0.16.5 is required, found ${actual:-missing}"
+  asdf install just "$just_version"
+  case "$group" in
+    all)
+      asdf install rust "$current"
+      asdf install rust "$msrv"
+      asdf install rust "$nightly"
+      ;;
+    check) asdf install rust "$current" ;;
+    fuzz) asdf install rust "$nightly" ;;
+  esac
+}
+
+setup_group() {
+  local group="$1"
+  case "$group" in all | check | fuzz) ;; *) fail "unknown setup group: $group" ;; esac
+
+  if [[ "${GITHUB_ACTIONS:-false}" == true ]]; then
+    case "$group" in
+      all) fail "just setup is for complete local setup; use a specific group in GitHub Actions" ;;
+      check) ASDF_RUST_VERSION="$current" RUSTUP_TOOLCHAIN="$current" check_current ;;
+      fuzz) ASDF_RUST_VERSION="$nightly" RUSTUP_TOOLCHAIN="$nightly" check_nightly ;;
+    esac
+  else
+    setup_local_base "$group"
+    case "$group" in
+      all | check)
+        ASDF_RUST_VERSION="$current" RUSTUP_TOOLCHAIN="$current" rustup component add rustfmt clippy
+        ASDF_RUST_VERSION="$current" RUSTUP_TOOLCHAIN="$current" check_current
+        ;;
+    esac
+    case "$group" in
+      all) ASDF_RUST_VERSION="$msrv" RUSTUP_TOOLCHAIN="$msrv" check_msrv ;;
+    esac
+    case "$group" in
+      all | fuzz) ASDF_RUST_VERSION="$nightly" RUSTUP_TOOLCHAIN="$nightly" check_nightly ;;
+    esac
+  fi
+
+  case "$group" in
+    all | check)
+      ASDF_RUST_VERSION="$current" RUSTUP_TOOLCHAIN="$current" \
+        install_cargo_app "$current" cargo-deny cargo-deny cargo-deny 0.19.7
+      ASDF_RUST_VERSION="$current" RUSTUP_TOOLCHAIN="$current" \
+        install_cargo_app "$current" cargo-dist cargo-dist dist 0.32.0
+      ;;
+  esac
+  case "$group" in
+    all | fuzz)
+      ASDF_RUST_VERSION="$nightly" RUSTUP_TOOLCHAIN="$nightly" \
+        install_cargo_app "$nightly" cargo-fuzz cargo-fuzz cargo-fuzz 0.13.2
+      ;;
+  esac
+  if [[ "${GITHUB_ACTIONS:-false}" != true ]]; then
+    asdf reshim rust
+  fi
+}
+
+read_authorities
+case "${1:-}" in
+  ci-versions)
+    printf 'current_rust=%s\nmsrv=%s\nnightly_rust=%s\njust=%s\n' "$current" "$msrv" "$nightly" "$just_version"
+    ;;
+  env)
+    case "${2:-}" in
+      current) select_toolchain "$current" ;;
+      msrv) select_toolchain "$msrv" ;;
+      nightly) select_toolchain "$nightly" ;;
+      *) fail "unknown environment: ${2:-missing}" ;;
+    esac
+    ;;
+  version)
+    case "${2:-}" in
+      current) printf '%s\n' "$current" ;;
+      msrv) printf '%s\n' "$msrv" ;;
+      nightly) printf '%s\n' "$nightly" ;;
+      just) printf '%s\n' "$just_version" ;;
+      cargo-deny) printf '0.19.7\n' ;;
+      cargo-dist) printf '0.32.0\n' ;;
+      cargo-fuzz) printf '0.13.2\n' ;;
+      *) fail "unknown version key: ${2:-missing}" ;;
+    esac
+    ;;
+  check)
+    case "${2:-}" in
+      current) check_current ;;
+      msrv) check_msrv ;;
+      audit)
+        check_current
+        check_cargo_app cargo-deny 0.19.7 cargo-deny
+        ;;
+      release)
+        check_current
+        check_cargo_app cargo-dist 0.32.0 dist
+        ;;
+      fuzz)
+        check_nightly
+        check_cargo_app cargo-fuzz 0.13.2 cargo-fuzz
+        ;;
+      *) fail "unknown check group: ${2:-missing}" ;;
+    esac
+    ;;
+  setup) setup_group "${2:-all}" ;;
+  *) fail "usage: scripts/tools {ci-versions|env|version|check|setup}" ;;
+esac

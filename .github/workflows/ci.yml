@@ -8,115 +8,108 @@ permissions:
   contents: read
 
 jobs:
-  checks:
+  current:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@1.97.1
+      - name: Read repository tool versions
+        id: versions
+        run: scripts/tools ci-versions >> "$GITHUB_OUTPUT"
+
+      - name: Set up Just
+        uses: kokjinsam/setup-just@v1.0.0
         with:
-          components: clippy, rustfmt
+          version-type: strict
+          version-file: .tool-versions
 
-      - name: Check formatting
-        run: cargo fmt --all -- --check
+      - name: Set up Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: ${{ steps.versions.outputs.current_rust }}
+          components: rustfmt, clippy
+          cache: false
+          rustflags: ""
 
-      - name: Run Clippy
-        run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+      - name: Set up check tools
+        run: just setup check
 
-      - name: Run tests
-        run: cargo test --locked --workspace --all-features
-
-      - name: Build workspace
-        run: cargo build --locked --workspace --all-features
-
-      - name: Build documentation
-        env:
-          RUSTDOCFLAGS: -D warnings
-        run: cargo doc --locked --workspace --all-features --no-deps
-
-      - name: Install cargo-deny
-        run: cargo install cargo-deny --version 0.19.7 --locked
+      - name: Check workspace
+        run: just check
 
       - name: Audit dependencies
-        run: cargo deny --locked check
+        run: just audit
 
-      - name: Audit fuzz dependencies
-        run: >-
-          cargo deny --manifest-path fuzz/Cargo.toml
-          --locked check --config fuzz/deny.toml
+      - name: Check release configuration
+        run: just release-check
 
-  msrv:
+  minimum:
     runs-on: ubuntu-latest
-    env:
-      RUSTUP_TOOLCHAIN: 1.85.0
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
 
-      - name: Install minimum supported Rust
-        uses: dtolnay/rust-toolchain@1.85.0
+      - name: Read repository tool versions
+        id: versions
+        run: scripts/tools ci-versions >> "$GITHUB_OUTPUT"
 
-      - name: Assert minimum supported Rust
-        run: |
-          test "$(rustc --version | awk '{print $2}')" = "1.85.0"
-          test "$(cargo --version | awk '{print $2}')" = "1.85.0"
+      - name: Read workspace MSRV
+        id: msrv
+        uses: actions-rust-lang/msrv@v0.1.1
+
+      - name: Set up Just
+        uses: kokjinsam/setup-just@v1.0.0
+        with:
+          version-type: strict
+          version-file: .tool-versions
+
+      - name: Set up Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: ${{ steps.msrv.outputs.msrv }}
+          cache: false
+          rustflags: ""
 
       - name: Check workspace at MSRV
-        run: cargo check --locked --workspace --all-features
+        run: just msrv
 
   fuzz-smoke:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - target: format_yaml
-            seed_dirs: fuzz/seeds/yaml
-          - target: format_json
-            seed_dirs: fuzz/seeds/json
-          - target: classify_oas
-            seed_dirs: fuzz/seeds/yaml fuzz/seeds/json
-          - target: reorder_edits
-            seed_dirs: fuzz/seeds/yaml fuzz/seeds/json
+        target:
+          - format_yaml
+          - format_json
+          - classify_oas
+          - reorder_edits
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
 
-      - name: Install fuzzing toolchain
-        uses: dtolnay/rust-toolchain@nightly
+      - name: Read repository tool versions
+        id: versions
+        run: scripts/tools ci-versions >> "$GITHUB_OUTPUT"
+
+      - name: Set up Just
+        uses: kokjinsam/setup-just@v1.0.0
         with:
-          toolchain: nightly-2026-07-30
+          version-type: strict
+          version-file: .tool-versions
 
-      - name: Install cargo-fuzz
-        run: cargo install cargo-fuzz --version 0.13.2 --locked
+      - name: Set up Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: ${{ steps.versions.outputs.nightly_rust }}
+          cache: false
+          rustflags: ""
 
-      - name: Build fuzz target
-        run: cargo +nightly-2026-07-30 fuzz build ${{ matrix.target }}
+      - name: Set up fuzz tools
+        run: just setup fuzz
 
-      - name: Replay committed seeds
-        env:
-          SEED_DIRS: ${{ matrix.seed_dirs }}
-          TARGET: ${{ matrix.target }}
-        run: |
-          for seed_dir in $SEED_DIRS; do
-            while IFS= read -r -d '' seed; do
-              cargo +nightly-2026-07-30 fuzz run "$TARGET" "$seed" -- \
-                -runs=1 -timeout=5 -rss_limit_mb=2048
-            done < <(find "$seed_dir" -type f -print0 | sort -z)
-          done
-
-      - name: Run bounded fuzz campaign
-        env:
-          SEED_DIRS: ${{ matrix.seed_dirs }}
-          TARGET: ${{ matrix.target }}
-        run: |
-          mkdir -p "fuzz/corpus/$TARGET"
-          cargo +nightly-2026-07-30 fuzz run "$TARGET" \
-            "fuzz/corpus/$TARGET" $SEED_DIRS -- \
-            -seed=424242 -runs=512 -max_total_time=30 -max_len=65536 \
-            -timeout=5 -rss_limit_mb=2048
+      - name: Run bounded fuzz smoke campaign
+        run: just fuzz-smoke "${{ matrix.target }}"
 
       - name: Upload fuzz artifacts
         if: failure()
