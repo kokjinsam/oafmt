@@ -1,155 +1,94 @@
 # oafmt
 
-`oafmt` is a deterministic, syntax-preserving formatter for OpenAPI documents.
-It does not lint, resolve references, or perform general OpenAPI validation.
+`oafmt` puts OpenAPI fields in a consistent order. It formats YAML and JSON
+files for OpenAPI 3.0, 3.1, and 3.2. It keeps comments, spacing, scalar styles,
+and other source details.
 
-`oafmt` accepts UTF-8 YAML and strict JSON OpenAPI 3.0.x, 3.1.x, and
-3.2.x entry documents. It reorders only fixed fields at the entry-document
-root and fixed fields in fixed-method Operation Objects directly below that
-document's `paths`. The fixed methods are `get`, `put`, `post`, `delete`,
-`options`, `head`, `patch`, and `trace`; OpenAPI 3.2 also includes `query`.
+Before:
 
-Info Objects, Path Item Objects, schemas and `properties`, responses,
-callbacks, webhooks, component Path Items, `additionalOperations`, extensions,
-opaque values, and unexpected shapes are not formatted. Unknown fields retain
-their positional slots, and original source slices retain whitespace, comments,
-line endings, scalar spelling, and style. The executable preservation contract
-is documented in [`YAML_PRESERVATION.md`](YAML_PRESERVATION.md).
+```yaml
+paths: {}
+openapi: 3.1.0
+info: {title: Pets, version: '1'}
+```
 
-```sh
-oafmt FILE
-oafmt --write FILE...
-oafmt --check FILE...
-oafmt --diff FILE...
-oafmt --check --config path/to/oafmt.toml DIRECTORY...
-oafmt --stdin-filepath virtual.yaml < input.yaml
+After:
+
+```yaml
+openapi: 3.1.0
+info: {title: Pets, version: '1'}
+paths: {}
 ```
 
 ## Installation
 
-Install the published crate from crates.io:
+Install with Cargo:
 
 ```sh
 cargo install oafmt
 ```
 
-Or install the prebuilt release through Homebrew:
+Install with Homebrew:
 
 ```sh
 brew install kokjinsam/tap/oafmt
 ```
 
-GitHub releases provide `.tar.xz` archives for macOS and Linux on x86-64 and
-Arm64, with one `.sha256` file per archive. For example, replace `TARGET` with
-one of `aarch64-apple-darwin`, `x86_64-apple-darwin`,
-`aarch64-unknown-linux-gnu`, or `x86_64-unknown-linux-gnu`:
+Prebuilt files are on
+[GitHub Releases](https://github.com/kokjinsam/oafmt/releases).
+
+## Use
+
+Print one formatted file to standard output:
 
 ```sh
-curl -LO "https://github.com/kokjinsam/oafmt/releases/download/v0.1.0/oafmt-TARGET.tar.xz"
-curl -LO "https://github.com/kokjinsam/oafmt/releases/download/v0.1.0/oafmt-TARGET.tar.xz.sha256"
-sha256sum --check "oafmt-TARGET.tar.xz.sha256"
-tar -xJf "oafmt-TARGET.tar.xz"
-./oafmt-TARGET/oafmt openapi.yaml
+oafmt openapi.yaml
 ```
 
-On macOS, use `shasum -a 256 -c` in place of `sha256sum --check`.
-
-Plain stdout mode and `--stdin-filepath` accept one document. Stdin cannot be
-combined with file arguments, and `--write` does not accept stdin. Write,
-check, and diff modes accept one or more literal files, recursive directory
-selectors, or native glob selectors. Quote a glob to prevent the shell from
-expanding it:
+Use the other common modes for one or more files or directories:
 
 ```sh
+oafmt --write openapi.yaml
 oafmt --check .
-oafmt --diff 'apis/**/openapi.{yaml,json}' # rejected: braces are unsupported
-oafmt --diff 'apis/**/openapi.?ml'
+oafmt --diff openapi.yaml
 ```
 
-Directory discovery recursively selects only `openapi.yaml`, `openapi.yml`, and
-`openapi.json` by default. A native glob supplies its own inclusion pattern.
-Discovered candidates must end in `.yaml`, `.yml`, or `.json`; a selector that
-has no candidates after filtering is an error. Paths expanded by a shell arrive
-as ordinary literal files and retain the literal-file rules.
+`--write` updates files. `--check` reports files that need changes. `--diff`
+shows the changes without updating files.
 
-For `--write`, `--check`, and `--diff`, `oafmt` finds the nearest `oafmt.toml`
-from the current directory upward. `--config PATH` overrides that lookup.
-An explicit config path may be relative or absolute and may traverse symlinked
-files or directories. Parent (`..`) components are accepted before the first
-symlink component, but a parent component after a symlink component is rejected
-as ambiguous before configuration reading, discovery, preflight, or writes.
-Configuration is strict and affects discovery only:
+For directory discovery, add an `oafmt.toml` file when you need custom paths:
 
 ```toml
 [discovery]
-include = ["apis/**/openapi.yaml", "apis/**/openapi.json"]
+include = ["apis/**/openapi.yaml"]
 exclude = ["apis/generated/**"]
-respect_gitignore = true
 ```
 
-`include`, when supplied, must be non-empty and replaces the default directory
-basenames. `exclude` is optional and always wins. Patterns are relative to the
-configuration file's lexically named directory, including when the file is a
-symlink; they are not re-anchored to the symlink target's directory. The
-supported component-aware glob syntax is `*`, `?`, character classes, and `**`.
-Brace expansion and shell syntax are not supported; literal braces may be
-matched inside character classes, such as `file[{].yaml` and `file[}].yaml`.
-Unknown fields, invalid types, empty supplied include lists, missing explicit
-config files, and malformed patterns are errors before any file is processed or
-written.
+See [Advanced CLI behavior](ADVANCED_USAGE.md) for discovery, glob,
+configuration, ignore, path, symlink, and write-safety details.
 
-Directory and native-glob discovery respects repository and nested `.gitignore`
-files by default, without consulting global or system ignore files. Set
-`respect_gitignore = false` to disable that filtering. VCS metadata is always
-skipped. Configured excludes apply after Git-ignore rules. Literal files bypass
-include, exclude, and Git-ignore filtering.
+## What oafmt changes
 
-Inputs are normalized lexically without canonicalizing file symlinks,
-deduplicated, sorted by normalized absolute identity, and processed serially.
-An explicit file spelling wins over a discovered spelling. Discovered-only
-paths use a current-directory-relative spelling when possible. Read-only modes
-follow explicitly named file symlinks and may follow an explicitly named
-directory-symlink root. Write mode rejects both kinds before replacement.
-Discovery never follows nested directory symlinks or selects discovered file
-symlinks.
+`oafmt` sorts known fields at the document root. It also sorts known fields in
+standard HTTP operations under `paths`. It does not format schemas, responses,
+callbacks, webhooks, extensions, or other nested content. It does not lint,
+resolve references, or check whether the API follows all OpenAPI rules.
 
-Write mode resolves every selector and preflights every selected file before
-making any change, then performs permission-preserving atomic replacement per
-changed file. A config, selector, traversal, input, or formatting failure
-prevents every replacement. A later replacement failure does not roll back
-earlier successful replacements, so a multi-file write is not transactional
-across the set. The formatter does not resolve references or process files in
-parallel.
+See [YAML preservation](YAML_PRESERVATION.md) for the exact preservation rules.
 
 ## Development
 
-Install the complete pinned local toolchain through asdf 0.16.5, then run the
-public verification recipes:
+Use the public project commands:
 
 ```sh
 just setup
 just check
-just msrv
 just audit
-just release-check
 ```
 
-CI separately checks the locked workspace on Rust 1.85. Pull requests also run
-`dist plan` in the generated release workflow. Maximum-policy linting uses Rust
-and Clippy 1.97.1.
+See [Fuzzing](fuzz/README.md) for fuzz-test instructions.
 
-CI also builds and smoke-tests four fuzz targets on
-`nightly-2026-07-30` with `cargo-fuzz` 0.13.2. It replays the committed YAML
-and JSON seeds, then runs a deterministic bounded campaign for formatting,
-classification, and edit-plan safety. A weekly Ubuntu workflow runs longer
-campaigns. Setup, replay, minimization, and corpus handling are documented in
-[`fuzz/README.md`](fuzz/README.md).
-
-Run the four bounded fuzz smoke campaigns with:
-
-```sh
-just fuzz-smoke
-```
+This project is primarily coded by AI under human direction and review.
 
 ## License
 
