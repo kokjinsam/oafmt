@@ -20,6 +20,10 @@ readme = "README.md"
 keywords = ["openapi", "formatter", "yaml", "json"]
 categories = ["command-line-utilities", "development-tools"]
 
+[workspace.metadata.project-tools]
+cargo-deny = "0.19.7"
+cargo-fuzz = "0.13.2"
+
 [workspace.lints.rust]
 unsafe_code = "forbid"
 non_ascii_idents = "forbid"

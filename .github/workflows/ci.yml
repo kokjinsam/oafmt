@@ -14,15 +14,9 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
-      - name: Read repository tool versions
+      - name: Read tool versions
         id: versions
         run: scripts/tools ci-versions >> "$GITHUB_OUTPUT"
-
-      - name: Set up Just
-        uses: kokjinsam/setup-just@v1.0.0
-        with:
-          version-type: strict
-          version-file: .tool-versions
 
       - name: Set up Rust
         uses: actions-rust-lang/setup-rust-toolchain@v1
@@ -31,6 +25,18 @@ jobs:
           components: rustfmt, clippy
           cache: false
           rustflags: ""
+
+      - name: Set up Cargo Deny
+        uses: taiki-e/install-action@v2.85.12
+        with:
+          tool: cargo-deny@${{ steps.versions.outputs.cargo_deny }}
+          fallback: none
+
+      - name: Set up Just
+        uses: kokjinsam/setup-just@v1.0.0
+        with:
+          version-type: strict
+          version-file: .tool-versions
 
       - name: Set up check tools
         run: just setup check
@@ -54,15 +60,9 @@ jobs:
         id: versions
         run: scripts/tools ci-versions >> "$GITHUB_OUTPUT"
 
-      - name: Read workspace MSRV
+      - name: Read MSRV
         id: msrv
         uses: actions-rust-lang/msrv@v0.1.1
-
-      - name: Set up Just
-        uses: kokjinsam/setup-just@v1.0.0
-        with:
-          version-type: strict
-          version-file: .tool-versions
 
       - name: Set up Rust
         uses: actions-rust-lang/setup-rust-toolchain@v1
@@ -71,7 +71,13 @@ jobs:
           cache: false
           rustflags: ""
 
-      - name: Check workspace at MSRV
+      - name: Set up Just
+        uses: kokjinsam/setup-just@v1.0.0
+        with:
+          version-type: strict
+          version-file: .tool-versions
+
+      - name: Check MSRV
         run: just msrv
 
   fuzz-smoke:
@@ -92,18 +98,18 @@ jobs:
         id: versions
         run: scripts/tools ci-versions >> "$GITHUB_OUTPUT"
 
-      - name: Set up Just
-        uses: kokjinsam/setup-just@v1.0.0
-        with:
-          version-type: strict
-          version-file: .tool-versions
-
       - name: Set up Rust
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: ${{ steps.versions.outputs.nightly_rust }}
           cache: false
           rustflags: ""
+
+      - name: Set up Just
+        uses: kokjinsam/setup-just@v1.0.0
+        with:
+          version-type: strict
+          version-file: .tool-versions
 
       - name: Set up fuzz tools
         run: just setup fuzz

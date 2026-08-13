@@ -3,6 +3,7 @@ set -euo pipefail
 
 tool_versions_file="${OAFMT_TOOL_VERSIONS_FILE:-.tool-versions}"
 cargo_manifest="${OAFMT_CARGO_MANIFEST:-Cargo.toml}"
+dist_workspace_file="${OAFMT_DIST_WORKSPACE_FILE:-dist-workspace.toml}"
 
 fail() {
   printf 'error: %s\n' "$*" >&2
@@ -20,6 +21,54 @@ normalize_rust_version() {
   fi
 }
 
+read_toml_version() {
+  local file="$1" table="$2" key="$3" label="$4"
+  local kind value version
+  local -a tables=() values=() conflicts=()
+
+  [[ -f "$file" ]] || fail "missing authority file: $file"
+  while IFS=$'\t' read -r kind value; do
+    case "$kind" in
+      table) tables+=("$value") ;;
+      value) values+=("$value") ;;
+      conflict) conflicts+=("$value") ;;
+    esac
+  done < <(awk -v table="$table" -v key="$key" '
+    /^[[:space:]]*\[/ {
+      section = $0
+      sub(/[[:space:]]*#.*$/, "", section)
+      gsub(/^[[:space:]]*|[[:space:]]*$/, "", section)
+      if (section !~ /^\[[^][]+\]$/) {
+        section = ""
+      }
+      if (section == table) {
+        print "table\t" section
+      }
+      next
+    }
+    $0 ~ "^[[:space:]]*" key "[[:space:]]*=" {
+      line = $0
+      sub("^[[:space:]]*" key "[[:space:]]*=[[:space:]]*", "", line)
+      sub(/[[:space:]]*#.*$/, "", line)
+      gsub(/^[[:space:]]*|[[:space:]]*$/, "", line)
+      if (section == table) {
+        print "value\t" line
+      } else {
+        print "conflict\t" section
+      }
+    }
+  ' "$file")
+
+  ((${#tables[@]} == 1)) || fail "$file must contain exactly one $table table"
+  ((${#conflicts[@]} == 0)) || fail "$file contains a conflicting $key record outside $table"
+  ((${#values[@]} > 0)) || fail "$file is missing $key in $table"
+  ((${#values[@]} == 1)) || fail "$file contains duplicate $key keys in $table"
+  value="${values[0]}"
+  [[ "$value" =~ ^\"((0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*))\"$ ]] || fail "malformed $label version: $value"
+  version="${BASH_REMATCH[1]}"
+  printf '%s\n' "$version"
+}
+
 read_authorities() {
   local cargo_msrv_raw
   local -a cargo_msrv_records=() rust_values=() just_values=() records=() fields=()
@@ -27,6 +76,10 @@ read_authorities() {
 
   [[ -f "$cargo_manifest" ]] || fail "missing authority file: $cargo_manifest"
   [[ -f "$tool_versions_file" ]] || fail "missing authority file: $tool_versions_file"
+
+  cargo_deny_version="$(read_toml_version "$cargo_manifest" '[workspace.metadata.project-tools]' cargo-deny cargo-deny)"
+  cargo_fuzz_version="$(read_toml_version "$cargo_manifest" '[workspace.metadata.project-tools]' cargo-fuzz cargo-fuzz)"
+  cargo_dist_version="$(read_toml_version "$dist_workspace_file" '[dist]' cargo-dist-version cargo-dist)"
 
   while IFS= read -r value; do
     cargo_msrv_records+=("$value")
@@ -211,16 +264,21 @@ setup_group() {
 
   case "$group" in
     all | check)
+      if [[ "${GITHUB_ACTIONS:-false}" == true ]]; then
+        ASDF_RUST_VERSION="$current" RUSTUP_TOOLCHAIN="$current" \
+          check_cargo_app cargo-deny "$cargo_deny_version" cargo-deny
+      else
+        ASDF_RUST_VERSION="$current" RUSTUP_TOOLCHAIN="$current" \
+          install_cargo_app "$current" cargo-deny cargo-deny cargo-deny "$cargo_deny_version"
+      fi
       ASDF_RUST_VERSION="$current" RUSTUP_TOOLCHAIN="$current" \
-        install_cargo_app "$current" cargo-deny cargo-deny cargo-deny 0.19.7
-      ASDF_RUST_VERSION="$current" RUSTUP_TOOLCHAIN="$current" \
-        install_cargo_app "$current" cargo-dist cargo-dist dist 0.32.0
+        install_cargo_app "$current" cargo-dist cargo-dist dist "$cargo_dist_version"
       ;;
   esac
   case "$group" in
     all | fuzz)
       ASDF_RUST_VERSION="$nightly" RUSTUP_TOOLCHAIN="$nightly" \
-        install_cargo_app "$nightly" cargo-fuzz cargo-fuzz cargo-fuzz 0.13.2
+        install_cargo_app "$nightly" cargo-fuzz cargo-fuzz cargo-fuzz "$cargo_fuzz_version"
       ;;
   esac
   if [[ "${GITHUB_ACTIONS:-false}" != true ]]; then
@@ -231,7 +289,8 @@ setup_group() {
 read_authorities
 case "${1:-}" in
   ci-versions)
-    printf 'current_rust=%s\nmsrv=%s\nnightly_rust=%s\njust=%s\n' "$current" "$msrv" "$nightly" "$just_version"
+    printf 'current_rust=%s\nmsrv=%s\nnightly_rust=%s\njust=%s\ncargo_deny=%s\n' \
+      "$current" "$msrv" "$nightly" "$just_version" "$cargo_deny_version"
     ;;
   env)
     case "${2:-}" in
@@ -247,9 +306,9 @@ case "${1:-}" in
       msrv) printf '%s\n' "$msrv" ;;
       nightly) printf '%s\n' "$nightly" ;;
       just) printf '%s\n' "$just_version" ;;
-      cargo-deny) printf '0.19.7\n' ;;
-      cargo-dist) printf '0.32.0\n' ;;
-      cargo-fuzz) printf '0.13.2\n' ;;
+      cargo-deny) printf '%s\n' "$cargo_deny_version" ;;
+      cargo-dist) printf '%s\n' "$cargo_dist_version" ;;
+      cargo-fuzz) printf '%s\n' "$cargo_fuzz_version" ;;
       *) fail "unknown version key: ${2:-missing}" ;;
     esac
     ;;
@@ -259,15 +318,15 @@ case "${1:-}" in
       msrv) check_msrv ;;
       audit)
         check_current
-        check_cargo_app cargo-deny 0.19.7 cargo-deny
+        check_cargo_app cargo-deny "$cargo_deny_version" cargo-deny
         ;;
       release)
         check_current
-        check_cargo_app cargo-dist 0.32.0 dist
+        check_cargo_app cargo-dist "$cargo_dist_version" dist
         ;;
       fuzz)
         check_nightly
-        check_cargo_app cargo-fuzz 0.13.2 cargo-fuzz
+        check_cargo_app cargo-fuzz "$cargo_fuzz_version" cargo-fuzz
         ;;
       *) fail "unknown check group: ${2:-missing}" ;;
     esac
