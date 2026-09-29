@@ -14,7 +14,7 @@ description = "Command-line interface for deterministic, syntax-preserving OpenA
 
 [dependencies]
 ignore = "=0.4.29"
-oafmt-core = { path = "../oafmt-core", version = "0.1.0" }
+oafmt-core = { path = "../oafmt-core", version = "0.2.0" }
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 wax = { version = "=0.7.0", default-features = false }

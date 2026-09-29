@@ -13,8 +13,8 @@ categories.workspace = true
 description = "Pure orchestration for deterministic, syntax-preserving OpenAPI formatting"
 
 [dependencies]
-oafmt-oas = { path = "../oafmt-oas", version = "0.1.0" }
-oafmt-syntax = { path = "../oafmt-syntax", version = "0.1.0" }
+oafmt-oas = { path = "../oafmt-oas", version = "0.2.0" }
+oafmt-syntax = { path = "../oafmt-syntax", version = "0.2.0" }
 
 [dev-dependencies]
 proptest = { version = "=1.11.0", default-features = false, features = ["std"] }

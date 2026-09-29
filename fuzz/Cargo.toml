@@ -10,9 +10,9 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "=0.4.13"
-oafmt-core = { version = "=0.1.0", path = "../crates/oafmt-core" }
-oafmt-oas = { version = "=0.1.0", path = "../crates/oafmt-oas" }
-oafmt-syntax = { version = "=0.1.0", path = "../crates/oafmt-syntax" }
+oafmt-core = { version = "=0.2.0", path = "../crates/oafmt-core" }
+oafmt-oas = { version = "=0.2.0", path = "../crates/oafmt-oas" }
+oafmt-syntax = { version = "=0.2.0", path = "../crates/oafmt-syntax" }
 
 [[bin]]
 name = "format_yaml"
