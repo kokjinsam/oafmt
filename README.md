@@ -54,7 +54,10 @@ oafmt --diff openapi.yaml
 ```
 
 `--write` updates files. `--check` reports files that need changes. `--diff`
-shows the changes without updating files.
+shows the changes without updating files. Before each `--write` replacement,
+`oafmt` checks that the file still has the bytes it read during preflight. See
+[Advanced CLI behavior](ADVANCED_USAGE.md) for conflict handling and filesystem
+guarantees.
 
 For directory discovery, add an `oafmt.toml` file when you need custom paths:
 

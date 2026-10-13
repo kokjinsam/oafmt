@@ -7,7 +7,7 @@
 
 use std::fs;
 use std::io::Write;
-use std::os::unix::fs::{PermissionsExt, symlink};
+use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -1917,26 +1917,48 @@ fn read_only_modes_follow_explicit_symlinks_but_write_rejects_them() {
 }
 
 #[test]
-fn write_is_atomic_in_place_and_preserves_permissions() {
+fn write_replaces_files_and_preserves_ordinary_permissions() {
     let directory = TestDir::new();
     let path = directory.write("api.json", input_json());
+    let other_path = directory.write("other.yaml", input_yaml());
+    let unchanged_path = directory.write("unchanged.yaml", expected_yaml());
     fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+    fs::set_permissions(&other_path, fs::Permissions::from_mode(0o640)).unwrap();
+    let unchanged_inode = fs::metadata(&unchanged_path).unwrap().ino();
 
-    let output = command().args(["--write"]).arg(&path).output().unwrap();
+    let output = command()
+        .args(["--write"])
+        .arg(&path)
+        .arg(&other_path)
+        .arg(&unchanged_path)
+        .output()
+        .unwrap();
 
     assert_eq!(output.status.code(), Some(0));
     assert!(output.stdout.is_empty());
     assert!(output.stderr.is_empty());
     assert_eq!(fs::read_to_string(&path).unwrap(), expected_json());
+    assert_eq!(fs::read_to_string(&other_path).unwrap(), expected_yaml());
+    assert_eq!(
+        fs::metadata(&unchanged_path).unwrap().ino(),
+        unchanged_inode
+    );
     assert_eq!(
         fs::metadata(&path).unwrap().permissions().mode() & 0o777,
         0o600
+    );
+    assert_eq!(
+        fs::metadata(&other_path).unwrap().permissions().mode() & 0o777,
+        0o640
     );
     let remaining: Vec<_> = fs::read_dir(directory.path())
         .unwrap()
         .map(|entry| entry.unwrap().file_name())
         .collect();
-    assert_eq!(remaining, [path.file_name().unwrap()]);
+    assert_eq!(remaining.len(), 3);
+    assert!(remaining.contains(&path.file_name().unwrap().to_os_string()));
+    assert!(remaining.contains(&other_path.file_name().unwrap().to_os_string()));
+    assert!(remaining.contains(&unchanged_path.file_name().unwrap().to_os_string()));
 }
 
 #[test]

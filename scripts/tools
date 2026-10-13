@@ -216,14 +216,22 @@ install_cargo_app() {
   if [[ "$actual" != "$version" ]]; then
     ASDF_RUST_VERSION="$toolchain" RUSTUP_TOOLCHAIN="$toolchain" \
       cargo install --locked --force "$crate" --version "$version"
+    if [[ "${GITHUB_ACTIONS:-false}" != true ]]; then
+      asdf reshim rust "$toolchain"
+    fi
   fi
   check_cargo_app "$label" "$version" "$binary"
+}
+
+check_asdf_version() {
+  local actual="${1#v}"
+  [[ "$actual" == "0.16.5" ]] || fail "asdf 0.16.5 is required, found ${actual:-missing}"
 }
 
 setup_local_base() {
   local group="$1" actual
   actual="$({ asdf version 2>/dev/null || true; })"
-  [[ "$actual" == "0.16.5" ]] || fail "asdf 0.16.5 is required, found ${actual:-missing}"
+  check_asdf_version "$actual"
   asdf install just "$just_version"
   case "$group" in
     all)

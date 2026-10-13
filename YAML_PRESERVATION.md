@@ -21,6 +21,10 @@ unexpected shapes.
 
 ## Preservation contract
 
+This contract describes document bytes and parsed meaning. It does not describe
+filesystem metadata preserved by `--write`; see the
+[write-safety contract](ADVANCED_USAGE.md#checks-before-updates).
+
 For a successful format:
 
 - output is deterministic and a second pass is byte-identical;
