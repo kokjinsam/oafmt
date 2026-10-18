@@ -2,9 +2,12 @@
 //!
 //! The CLI owns argument parsing, discovery, diagnostics, preflight, and
 //! permission-preserving atomic replacement. Write mode preflights the complete
-//! selection before mutating any file, then replaces each changed file
-//! independently. Failures are reported in deterministic path order and use the
-//! aggregate exit lattice `3 > 2 > 1 > 0`.
+//! selection before mutation. Before replacing each changed file, it compares
+//! the current raw bytes with the retained preflight snapshot. A mismatch is a
+//! write conflict; each successful replacement is atomic on the supported
+//! filesystem, but the comparison and rename are separate operations. Files
+//! are replaced independently, failures are reported in deterministic path
+//! order, and the aggregate exit lattice is `3 > 2 > 1 > 0`.
 
 use std::env;
 use std::ffi::OsString;
@@ -60,6 +63,16 @@ struct Failure {
 enum Preflight {
     Ready(PreparedFile),
     Failed(Failure),
+}
+
+enum WriteEvent {
+    PreflightComplete,
+    TemporaryPrepared,
+}
+
+enum ReplaceError {
+    Conflict,
+    Io(io::Error),
 }
 
 fn main() -> ExitCode {
@@ -125,6 +138,58 @@ fn run_files(
     files: Vec<FileInput>,
     discovery_failures: Vec<discovery::Failure>,
 ) -> Result<u8, (u8, String)> {
+    let mut stdout = io::stdout().lock();
+    let mut stderr = io::stderr().lock();
+    let mut hook = |_event: WriteEvent| {};
+    run_files_with_writers(
+        mode,
+        files,
+        discovery_failures,
+        &mut stdout,
+        &mut stderr,
+        &mut hook,
+    )
+}
+
+fn run_files_with_writers(
+    mode: Mode,
+    files: Vec<FileInput>,
+    discovery_failures: Vec<discovery::Failure>,
+    stdout: &mut impl Write,
+    stderr: &mut impl Write,
+    hook: &mut impl FnMut(WriteEvent),
+) -> Result<u8, (u8, String)> {
+    let preflight = collect_preflight(mode, files, discovery_failures);
+    if mode == Mode::Write {
+        hook(WriteEvent::PreflightComplete);
+    }
+
+    match mode {
+        Mode::Stdout => match preflight.into_iter().next().ok_or_else(|| {
+            (
+                3,
+                "internal invariant: stdout mode has no preflight result".to_owned(),
+            )
+        })? {
+            Preflight::Ready(file) => {
+                stdout
+                    .write_all(file.output.as_bytes())
+                    .map_err(|error| user_error(format!("cannot write stdout: {error}")))?;
+                Ok(0)
+            }
+            Preflight::Failed(failure) => Err((failure.severity, failure.message)),
+        },
+        Mode::Write => run_write(preflight, stderr, hook),
+        Mode::Check => Ok(run_check(preflight, stderr)),
+        Mode::Diff => run_diff(preflight, stdout, stderr),
+    }
+}
+
+fn collect_preflight(
+    mode: Mode,
+    files: Vec<FileInput>,
+    discovery_failures: Vec<discovery::Failure>,
+) -> Vec<Preflight> {
     let mut keyed_preflight: Vec<_> = files
         .into_iter()
         .map(|file| {
@@ -142,30 +207,10 @@ fn run_files(
         )
     }));
     keyed_preflight.sort_by(|left, right| left.0.cmp(&right.0));
-    let preflight: Vec<_> = keyed_preflight
+    keyed_preflight
         .into_iter()
         .map(|(_, result)| result)
-        .collect();
-
-    match mode {
-        Mode::Stdout => match preflight.into_iter().next().ok_or_else(|| {
-            (
-                3,
-                "internal invariant: stdout mode has no preflight result".to_owned(),
-            )
-        })? {
-            Preflight::Ready(file) => {
-                io::stdout()
-                    .write_all(file.output.as_bytes())
-                    .map_err(|error| user_error(format!("cannot write stdout: {error}")))?;
-                Ok(0)
-            }
-            Preflight::Failed(failure) => Err((failure.severity, failure.message)),
-        },
-        Mode::Write => run_write(preflight),
-        Mode::Check => Ok(run_check(preflight)),
-        Mode::Diff => run_diff(preflight),
-    }
+        .collect()
 }
 
 fn preflight_file(mode: Mode, input: &FileInput) -> Preflight {
@@ -211,20 +256,20 @@ fn prepare_file(mode: Mode, path: &Path, display: &Path) -> Result<PreparedFile,
     })
 }
 
-fn run_check(preflight: Vec<Preflight>) -> u8 {
+fn run_check(preflight: Vec<Preflight>, stderr: &mut impl Write) -> u8 {
     let mut severities = Vec::with_capacity(preflight.len());
     for result in preflight {
         match result {
             Preflight::Ready(file) if file.changed => {
-                diagnostic(format_args!(
-                    "formatting changes required: {}",
-                    file.display.display()
-                ));
+                write_diagnostic(
+                    stderr,
+                    format_args!("formatting changes required: {}", file.display.display()),
+                );
                 severities.push(1);
             }
             Preflight::Ready(_) => severities.push(0),
             Preflight::Failed(failure) => {
-                diagnostic(failure.message);
+                write_diagnostic(stderr, failure.message);
                 severities.push(failure.severity);
             }
         }
@@ -232,7 +277,11 @@ fn run_check(preflight: Vec<Preflight>) -> u8 {
     aggregate_exit(severities)
 }
 
-fn run_diff(preflight: Vec<Preflight>) -> Result<u8, (u8, String)> {
+fn run_diff(
+    preflight: Vec<Preflight>,
+    stdout: &mut impl Write,
+    stderr: &mut impl Write,
+) -> Result<u8, (u8, String)> {
     let mut output = String::new();
     let mut severities = Vec::with_capacity(preflight.len());
     for result in preflight {
@@ -248,16 +297,20 @@ fn run_diff(preflight: Vec<Preflight>) -> Result<u8, (u8, String)> {
                 severities.push(0);
             }
             Preflight::Failed(failure) => {
-                diagnostic(failure.message);
+                write_diagnostic(stderr, failure.message);
                 severities.push(failure.severity);
             }
         }
     }
     let collected_severity = aggregate_exit(severities);
-    write_diff_output(&mut io::stdout(), &output, collected_severity)
+    write_diff_output(stdout, &output, collected_severity)
 }
 
-fn run_write(preflight: Vec<Preflight>) -> Result<u8, (u8, String)> {
+fn run_write(
+    preflight: Vec<Preflight>,
+    stderr: &mut impl Write,
+    hook: &mut impl FnMut(WriteEvent),
+) -> Result<u8, (u8, String)> {
     let preflight_exit = aggregate_exit(preflight.iter().filter_map(|result| match result {
         Preflight::Ready(_) => None,
         Preflight::Failed(failure) => Some(failure.severity),
@@ -265,7 +318,7 @@ fn run_write(preflight: Vec<Preflight>) -> Result<u8, (u8, String)> {
     if preflight_exit != 0 {
         for result in preflight {
             if let Preflight::Failed(failure) = result {
-                diagnostic(failure.message);
+                write_diagnostic(stderr, failure.message);
             }
         }
         return Ok(preflight_exit);
@@ -280,13 +333,28 @@ fn run_write(preflight: Vec<Preflight>) -> Result<u8, (u8, String)> {
             ));
         };
         if file.changed {
-            match atomic_replace(&file.path, file.output.as_bytes()) {
+            match atomic_replace(
+                &file.path,
+                file.source.as_bytes(),
+                file.output.as_bytes(),
+                hook,
+            ) {
                 Ok(()) => severities.push(0),
-                Err(error) => {
-                    diagnostic(format_args!(
-                        "cannot replace {}: {error}",
-                        file.display.display()
-                    ));
+                Err(ReplaceError::Conflict) => {
+                    write_diagnostic(
+                        stderr,
+                        format_args!(
+                            "write conflict: {}: file changed since preflight",
+                            file.display.display()
+                        ),
+                    );
+                    severities.push(2);
+                }
+                Err(ReplaceError::Io(error)) => {
+                    write_diagnostic(
+                        stderr,
+                        format_args!("cannot replace {}: {error}", file.display.display()),
+                    );
                     severities.push(2);
                 }
             }
@@ -430,8 +498,20 @@ fn infer_format(path: &Path) -> Result<InputFormat, (u8, String)> {
     }
 }
 
-fn atomic_replace(path: &Path, contents: &[u8]) -> io::Result<()> {
-    let permissions = fs::metadata(path)?.permissions();
+fn atomic_replace(
+    path: &Path,
+    expected: &[u8],
+    contents: &[u8],
+    hook: &mut impl FnMut(WriteEvent),
+) -> Result<(), ReplaceError> {
+    let metadata = fs::symlink_metadata(path).map_err(ReplaceError::Io)?;
+    if !metadata.file_type().is_file() {
+        return Err(ReplaceError::Io(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "destination is not a regular file",
+        )));
+    }
+    let permissions = metadata.permissions();
     let directory = path.parent().unwrap_or_else(|| Path::new("."));
     let file_name = path
         .file_name()
@@ -450,24 +530,54 @@ fn atomic_replace(path: &Path, contents: &[u8]) -> io::Result<()> {
         let mut file = match opened {
             Ok(file) => file,
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
-            Err(error) => return Err(error),
+            Err(error) => return Err(ReplaceError::Io(error)),
         };
-        let result = (|| {
-            file.set_permissions(permissions)?;
-            file.write_all(contents)?;
-            file.sync_all()?;
+        let result = (|| -> Result<(), ReplaceError> {
+            file.set_permissions(permissions)
+                .map_err(ReplaceError::Io)?;
+            file.write_all(contents).map_err(ReplaceError::Io)?;
+            file.sync_all().map_err(ReplaceError::Io)?;
             drop(file);
-            fs::rename(&temporary, path)
+            hook(WriteEvent::TemporaryPrepared);
+
+            let final_metadata = fs::symlink_metadata(path).map_err(ReplaceError::Io)?;
+            if !final_metadata.file_type().is_file() {
+                return Err(ReplaceError::Io(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "destination is not a regular file",
+                )));
+            }
+
+            let read_limit = expected
+                .len()
+                .checked_add(1)
+                .and_then(|length| u64::try_from(length).ok())
+                .ok_or_else(|| {
+                    ReplaceError::Io(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "snapshot is too large",
+                    ))
+                })?;
+            let mut current = Vec::with_capacity(expected.len().saturating_add(1));
+            fs::File::open(path)
+                .map_err(ReplaceError::Io)?
+                .take(read_limit)
+                .read_to_end(&mut current)
+                .map_err(ReplaceError::Io)?;
+            if current != expected {
+                return Err(ReplaceError::Conflict);
+            }
+            fs::rename(&temporary, path).map_err(ReplaceError::Io)
         })();
         if result.is_err() {
             let _ = fs::remove_file(&temporary);
         }
         return result;
     }
-    Err(io::Error::new(
+    Err(ReplaceError::Io(io::Error::new(
         io::ErrorKind::AlreadyExists,
         "could not allocate a temporary file",
-    ))
+    )))
 }
 
 fn unified_diff(path: &str, before: &str, after: &str) -> String {
@@ -527,16 +637,29 @@ fn diagnostic(message: impl fmt::Display) {
     drop(writeln!(io::stderr().lock(), "oafmt: {message}"));
 }
 
+fn write_diagnostic(writer: &mut impl Write, message: impl fmt::Display) {
+    drop(writeln!(writer, "oafmt: {message}"));
+}
+
 #[cfg(test)]
 mod tests {
     #![expect(
         clippy::unwrap_used,
-        reason = "the test asserts that a deliberately failing writer returns an error"
+        reason = "filesystem fixture setup uses unwrap so setup failures stop the test"
     )]
 
+    use std::fs;
     use std::io::{self, Write};
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
-    use super::{aggregate_exit, write_diff_output};
+    use super::{Mode, WriteEvent, aggregate_exit, run_files_with_writers, write_diff_output};
+    use crate::discovery::FileInput;
+
+    const INPUT_YAML: &str = include_str!("../../oafmt-core/tests/fixtures/basic.input.yaml");
+    const EXPECTED_YAML: &str = include_str!("../../oafmt-core/tests/fixtures/basic.expected.yaml");
+
+    type CapturedWrite = (Result<u8, (u8, String)>, Vec<u8>, Vec<u8>);
 
     struct FailingWriter;
 
@@ -568,6 +691,244 @@ mod tests {
             assert_eq!(severity, expected);
             assert!(message.contains("cannot write stdout"));
             assert!(message.contains("closed pipe"));
+        }
+    }
+
+    #[test]
+    fn write_conflicts_on_raw_changes_after_preflight_and_temp_preparation() {
+        let same_length = INPUT_YAML.replace("Pets", "Cats").into_bytes();
+        assert_eq!(same_length.len(), INPUT_YAML.len());
+        let cases = [
+            ("same-length edit", same_length, false),
+            ("invalid UTF-8 edit", vec![0xff, 0x00], false),
+            (
+                "already formatted bytes",
+                EXPECTED_YAML.as_bytes().to_vec(),
+                false,
+            ),
+            ("edit after temp preparation", vec![0xff, 0xfe], true),
+        ];
+
+        for (label, external, after_temp) in cases {
+            let directory = TestDir::new();
+            let path = directory.write("api.yaml", INPUT_YAML.as_bytes());
+            let mut changed = false;
+            let (result, stdout, stderr) =
+                run_write_with_hook(vec![path.clone()], |event| match event {
+                    WriteEvent::PreflightComplete if !after_temp && !changed => {
+                        fs::write(&path, &external).unwrap();
+                        changed = true;
+                    }
+                    WriteEvent::TemporaryPrepared if after_temp && !changed => {
+                        let temporary_files = directory.temporary_files();
+                        assert_eq!(temporary_files.len(), 1);
+                        assert_eq!(
+                            fs::read(&temporary_files[0]).unwrap(),
+                            EXPECTED_YAML.as_bytes()
+                        );
+                        assert_eq!(fs::read(&path).unwrap(), INPUT_YAML.as_bytes());
+                        fs::write(&path, &external).unwrap();
+                        changed = true;
+                    }
+                    _ => {}
+                });
+
+            assert!(changed, "{label}: mutation hook did not run");
+            assert_eq!(result.unwrap(), 2, "{label}");
+            assert!(stdout.is_empty(), "{label}: write mode wrote stdout");
+            assert_eq!(
+                stderr,
+                format!(
+                    "oafmt: write conflict: {}: file changed since preflight\n",
+                    path.display()
+                )
+                .as_bytes(),
+                "{label}"
+            );
+            assert_eq!(fs::read(&path).unwrap(), external, "{label}");
+            directory.assert_no_temporary_files();
+        }
+    }
+
+    #[test]
+    fn byte_identical_rewrite_remains_eligible_for_replacement() {
+        let directory = TestDir::new();
+        let path = directory.write("api.yaml", INPUT_YAML.as_bytes());
+        let (result, stdout, stderr) = run_write_with_hook(vec![path.clone()], |event| {
+            if matches!(event, WriteEvent::PreflightComplete) {
+                fs::write(&path, INPUT_YAML.as_bytes()).unwrap();
+            }
+        });
+
+        assert_eq!(result.unwrap(), 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+        assert_eq!(fs::read(&path).unwrap(), EXPECTED_YAML.as_bytes());
+        directory.assert_no_temporary_files();
+    }
+
+    #[test]
+    fn write_continues_after_a_conflict_without_rolling_back_other_files() {
+        let directory = TestDir::new();
+        let first = directory.write("a.yaml", INPUT_YAML.as_bytes());
+        let second = directory.write("b.yaml", INPUT_YAML.as_bytes());
+        let third = directory.write("c.yaml", INPUT_YAML.as_bytes());
+        let external = INPUT_YAML.replace("Pets", "Cats").into_bytes();
+
+        let (result, stdout, stderr) = run_write_with_hook(
+            vec![third.clone(), first.clone(), second.clone()],
+            |event| {
+                if matches!(event, WriteEvent::PreflightComplete) {
+                    fs::write(&second, &external).unwrap();
+                }
+            },
+        );
+
+        assert_eq!(result.unwrap(), 2);
+        assert!(stdout.is_empty());
+        assert_eq!(
+            stderr,
+            format!(
+                "oafmt: write conflict: {}: file changed since preflight\n",
+                second.display()
+            )
+            .as_bytes()
+        );
+        assert_eq!(fs::read(first).unwrap(), EXPECTED_YAML.as_bytes());
+        assert_eq!(fs::read(second).unwrap(), external);
+        assert_eq!(fs::read(third).unwrap(), EXPECTED_YAML.as_bytes());
+        directory.assert_no_temporary_files();
+    }
+
+    #[test]
+    fn non_regular_destination_failure_keeps_it_intact_and_continues() {
+        let directory = TestDir::new();
+        let first = directory.write("a.yaml", INPUT_YAML.as_bytes());
+        let second = directory.write("b.yaml", INPUT_YAML.as_bytes());
+        let third = directory.write("c.yaml", INPUT_YAML.as_bytes());
+        let mut replaced = false;
+        let mut prepared_count = 0;
+
+        let (result, stdout, stderr) = run_write_with_hook(
+            vec![first.clone(), second.clone(), third.clone()],
+            |event| {
+                if matches!(event, WriteEvent::TemporaryPrepared) {
+                    prepared_count += 1;
+                    if prepared_count == 2 && !replaced {
+                        fs::remove_file(&second).unwrap();
+                        fs::create_dir(&second).unwrap();
+                        fs::write(second.join("sentinel"), b"preserve").unwrap();
+                        replaced = true;
+                    }
+                }
+            },
+        );
+
+        assert!(replaced);
+        assert_eq!(result.unwrap(), 2);
+        assert!(stdout.is_empty());
+        let diagnostic = String::from_utf8(stderr).unwrap();
+        assert!(diagnostic.starts_with(&format!("oafmt: cannot replace {}:", second.display())));
+        assert!(diagnostic.contains("destination is not a regular file"));
+        assert_eq!(fs::read(first).unwrap(), EXPECTED_YAML.as_bytes());
+        assert_eq!(fs::read(second.join("sentinel")).unwrap(), b"preserve");
+        assert_eq!(fs::read(third).unwrap(), EXPECTED_YAML.as_bytes());
+        directory.assert_no_temporary_files();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn final_symlink_substitution_does_not_change_its_target() {
+        use std::os::unix::fs::symlink;
+
+        let directory = TestDir::new();
+        let path = directory.write("api.yaml", INPUT_YAML.as_bytes());
+        let target = directory.write("target.yaml", EXPECTED_YAML.as_bytes());
+        let mut substituted = false;
+
+        let (result, stdout, stderr) = run_write_with_hook(vec![path.clone()], |event| {
+            if matches!(event, WriteEvent::TemporaryPrepared) && !substituted {
+                fs::remove_file(&path).unwrap();
+                symlink(&target, &path).unwrap();
+                substituted = true;
+            }
+        });
+
+        assert!(substituted);
+        assert_eq!(result.unwrap(), 2);
+        assert!(stdout.is_empty());
+        let diagnostic = String::from_utf8(stderr).unwrap();
+        assert!(diagnostic.starts_with(&format!("oafmt: cannot replace {}:", path.display())));
+        assert!(diagnostic.contains("destination is not a regular file"));
+        assert!(
+            fs::symlink_metadata(&path)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(fs::read(&target).unwrap(), EXPECTED_YAML.as_bytes());
+        directory.assert_no_temporary_files();
+    }
+
+    fn run_write_with_hook(paths: Vec<PathBuf>, mut hook: impl FnMut(WriteEvent)) -> CapturedWrite {
+        let files = paths
+            .into_iter()
+            .map(|path| FileInput {
+                key: path.clone(),
+                display: path.clone(),
+                path,
+            })
+            .collect();
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        let result = run_files_with_writers(
+            Mode::Write,
+            files,
+            Vec::new(),
+            &mut stdout,
+            &mut stderr,
+            &mut hook,
+        );
+        (result, stdout, stderr)
+    }
+
+    struct TestDir(PathBuf);
+
+    impl TestDir {
+        fn new() -> Self {
+            static NEXT: AtomicUsize = AtomicUsize::new(0);
+            let path = std::env::temp_dir().join(format!(
+                "oafmt-write-contract-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            fs::create_dir(&path).unwrap();
+            Self(fs::canonicalize(path).unwrap())
+        }
+
+        fn write(&self, name: &str, contents: &[u8]) -> PathBuf {
+            let path = self.0.join(name);
+            fs::write(&path, contents).unwrap();
+            path
+        }
+
+        fn assert_no_temporary_files(&self) {
+            assert!(self.temporary_files().is_empty());
+        }
+
+        fn temporary_files(&self) -> Vec<PathBuf> {
+            fs::read_dir(&self.0)
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name())
+                .filter(|name| name.to_string_lossy().contains(".oafmt."))
+                .map(|name| self.0.join(name))
+                .collect()
+        }
+    }
+
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            fs::remove_dir_all(&self.0).unwrap();
         }
     }
 }

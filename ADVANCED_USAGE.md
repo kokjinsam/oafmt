@@ -105,8 +105,32 @@ selected file before it changes a file. A configuration, selector, traversal,
 input, or formatting error prevents all replacements.
 
 For each changed file, `oafmt` writes a temporary file in the same directory,
-keeps the original permissions, and syncs the content. It then uses one rename
-operation to replace the original file. This atomic replacement prevents other
-programs from reading a partly written file. `oafmt` removes the temporary file
-if replacement fails. If one replacement succeeds and a later replacement
-fails, the earlier change stays. The complete multi-file update is not atomic.
+keeps its ordinary permission bits, syncs and closes it, and then checks the
+destination immediately before replacement. The final path entry must still be
+a regular file, and its current raw bytes must match the bytes read during
+preflight. This comparison is bounded to the original byte length plus one byte
+and compares the complete contents; matching length, modification time, parsed
+meaning, or formatted output is not enough.
+
+If the bytes differ, `oafmt` leaves that destination as it found it, reports
+`oafmt: write conflict: <path>: file changed since preflight`, returns exit code
+2, and continues to later files in deterministic path order. A missing,
+unreadable, non-regular, or final-component symlink destination is an I/O
+failure and is not replaced. An unchanged file is not replaced.
+
+When the comparison succeeds, `oafmt` publishes the complete temporary file
+with one same-directory rename. This gives per-file atomic replacement on the
+supported filesystems; it does not provide an all-files transaction. If an
+earlier replacement succeeds and a later one fails or conflicts, the earlier
+change stays. `oafmt` attempts to remove its temporary file after a failure, but
+cleanup is best effort and a temporary file can remain if removal fails.
+The repository tests cover Linux and macOS. They do not establish the same
+rename behavior on every filesystem or qualify Windows.
+
+The comparison and rename are separate operations. A non-cooperating writer can
+still change the path or bytes between them, so stale-write protection is
+optimistic and does not remove that race. The rename preserves ordinary file
+permission bits only. It does not preserve file identity or hard links, and it
+does not guarantee ownership beyond normal replacement semantics, ACLs,
+extended attributes, or other platform-specific metadata. Syncing the temporary
+file does not promise that the directory update is crash-durable.
